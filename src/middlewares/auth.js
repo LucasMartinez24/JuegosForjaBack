@@ -14,20 +14,21 @@ const verificarRol = (rolesPermitidos) => {
     const token = authHeader.split(" ")[1];
 
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.usuario = decoded; // Inyecta id, email, rol y municipio en la petición
+      // 🚀 CORREGIDO: Agregamos el mismo string de respaldo que usas en el Login
+      const claveSecreta = process.env.JWT_SECRET || "FORJA_SECRET_KEY_2026";
 
-      // Verificar si el rol extraído del JWT tiene autorización
+      const decoded = jwt.verify(token, claveSecreta);
+      req.usuario = decoded;
+
       if (!rolesPermitidos.includes(req.usuario.rol)) {
-        return res
-          .status(403)
-          .json({
-            error: "Acceso prohibido. Permisos insuficientes para este rol.",
-          });
+        return res.status(403).json({
+          error: "Acceso prohibido. Permisos insuficientes para este rol.",
+        });
       }
 
       next();
     } catch (error) {
+      // Si la firma no coincide, cae acá
       return res.status(401).json({ error: "Token inválido o expirado." });
     }
   };

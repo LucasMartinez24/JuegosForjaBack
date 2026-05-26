@@ -1,10 +1,9 @@
-// src/controllers/equipoController.js
 const prisma = require("../config/db");
 const fs = require("fs");
 const path = require("path");
 
 // =========================================================================
-// A. Sincronizar Estado del Panel (Con resolución de nombres de sub-pruebas)
+// A. Sincronizar Estado del Panel (Inyectando Catálogo de Disciplinas Macro)
 // =========================================================================
 const obtenerEstadoPanel = async (req, res) => {
   try {
@@ -16,9 +15,15 @@ const obtenerEstadoPanel = async (req, res) => {
         .json({ error: "Identificador de usuario ausente." });
     }
 
+    // 1. Traemos todas las pruebas específicas para resolver nombres en el Front
     const pruebasGlobales = await prisma.pruebaEspecifica.findMany({
       include: { disciplina: true },
       orderBy: { nombrePrueba: "asc" },
+    });
+
+    // Traemos el catálogo de disciplinas generales que el Front necesita renderizar
+    const disciplinasGlobales = await prisma.disciplina.findMany({
+      orderBy: { nombre: "asc" },
     });
 
     const miEquipo = await prisma.equipo.findUnique({
@@ -34,7 +39,6 @@ const obtenerEstadoPanel = async (req, res) => {
 
     let equipoFormateado = null;
     if (miEquipo) {
-      // 🚀 RE-MAPEO INTELIGENTE: Traduce el ID de la segunda prueba a su nombre real para Angular
       const listaJugadoresConPruebas = miEquipo.deportistas.map((jugador) => {
         let nombreSegundaPrueba = null;
         if (jugador.idPrueba2) {
@@ -51,110 +55,110 @@ const obtenerEstadoPanel = async (req, res) => {
         };
       });
 
-      const primeraPrueba = miEquipo.deportistas[0]?.prueba || null;
-
       equipoFormateado = {
         ...miEquipo,
         jugadores: listaJugadoresConPruebas,
-        pruebaEspecifica: primeraPrueba
-          ? {
-              nombrePrueba: primeraPrueba.nombrePrueba,
-              maxJugadores: primeraPrueba.maxJugadores,
-            }
-          : {
-              nombrePrueba: miEquipo.disciplina.nombre,
-              maxJugadores: 10,
-            },
       };
     }
 
     return res.status(200).json({
+      disciplinasDisponibles: disciplinasGlobales,
       pruebasDisponibles: pruebasGlobales,
       equipoCargado: equipoFormateado,
     });
   } catch (error) {
     console.error("❌ ERROR EN OBTENER ESTADO PANEL:", error);
-    return res.status(500).json({
-      error: "Error al sincronizar datos del panel.",
-      detalle: error.message,
-    });
+    return res
+      .status(500)
+      .json({ error: "Error al sincronizar datos del panel." });
   }
 };
 
 // =========================================================================
-// B. Registrar Instancia/Equipo (Estado A del Front)
+// B. Registrar Instancia/Equipo
 // =========================================================================
 const registrarEquipo = async (req, res) => {
   try {
-    const { nombreEquipo, idPrueba } = req.body;
-    const usuarioId = req.usuario?.id || req.body.usuarioId;
+    const { nombreEquipo, idDisciplina } = req.body;
 
-    if (!nombreEquipo || !idPrueba) {
+    const usuarioIdRaw = req.usuario?.id || req.body.usuarioId;
+    const usuarioId = parseInt(usuarioIdRaw, 10);
+
+    console.log(
+      "DEBUG: usuarioId recibido:",
+      usuarioIdRaw,
+      " -> convertido:",
+      usuarioId,
+    );
+
+    if (isNaN(usuarioId)) {
+      return res
+        .status(401)
+        .json({ error: "Token de usuario inválido o ausente." });
+    }
+
+    if (!nombreEquipo || !idDisciplina) {
       return res.status(400).json({
-        error:
-          "El nombre del equipo y la instancia oficial de competencia son obligatorios.",
+        error: "Nombre de equipo e ID de disciplina son obligatorios.",
       });
     }
 
     const usuario = await prisma.usuario.findUnique({
-      where: { id: parseInt(usuarioId) },
+      where: { id: usuarioId },
+      include: { localidad: true },
     });
+
     if (!usuario) {
-      return res
-        .status(404)
-        .json({ error: "El representante de cuenta no existe." });
+      return res.status(404).json({ error: "Representante no encontrado." });
     }
 
     const equipoExistente = await prisma.equipo.findUnique({
-      where: { usuarioId: parseInt(usuarioId) },
+      where: { usuarioId: usuarioId },
     });
+
     if (equipoExistente) {
       return res
         .status(400)
         .json({ error: "Su cuenta ya posee una delegación registrada." });
     }
 
-    const pruebaEspecifica = await prisma.pruebaEspecifica.findUnique({
-      where: { id: parseInt(idPrueba) },
+    const disciplina = await prisma.disciplina.findUnique({
+      where: { id: parseInt(idDisciplina, 10) },
     });
 
-    if (!pruebaEspecifica) {
-      return res
-        .status(404)
-        .json({ error: "La subcategoría seleccionada no existe." });
+    if (!disciplina) {
+      return res.status(404).json({ error: "Disciplina no encontrada." });
     }
 
-    const siglasAutomáticas = nombreEquipo
-      .replace(/\s+/g, "")
-      .substring(0, 3)
-      .toUpperCase();
+    const nombreMunicipio = usuario.localidad?.nombre || "Sin Jurisdicción";
+    const siglas = `${nombreEquipo.substring(0, 3).toUpperCase()}_${Math.floor(100 + Math.random() * 900)}`;
 
     const nuevoEquipo = await prisma.equipo.create({
       data: {
         nombre: nombreEquipo.trim(),
-        siglas: `${siglasAutomáticas}_${Math.floor(100 + Math.random() * 900)}`,
-        municipio: usuario.municipioAsignado || "Sin Municipio",
-        idDisciplina: pruebaEspecifica.idDisciplina,
-        usuarioId: parseInt(usuarioId),
+        siglas: siglas,
+        municipio: nombreMunicipio,
+        idDisciplina: parseInt(idDisciplina, 10),
+        usuarioId: usuarioId,
       },
       include: { disciplina: true },
     });
 
     return res.status(201).json({
-      mensaje: `Equipo configurado con éxito para competir en la instancia oficial.`,
+      mensaje: `Delegación "${nuevoEquipo.nombre}" registrada correctamente bajo ${nombreMunicipio}.`,
       equipo: nuevoEquipo,
     });
   } catch (error) {
-    console.error("❌ ERROR EN REGISTRAR EQUIPO:", error);
+    console.error("❌ ERROR CRÍTICO EN REGISTRAR EQUIPO:", error);
     return res.status(500).json({
-      error: "Error al procesar el alta de la delegación.",
+      error: "Error interno al procesar el alta.",
       detalle: error.message,
     });
   }
 };
 
 // =========================================================================
-// C. Registrar Deportista con Soporte Multi-Prueba y Antifugas de Disco
+// C. Registrar Deportista con Soporte de CUD para Adaptado
 // =========================================================================
 const registrarJugador = async (req, res) => {
   let archivosSubidos = [];
@@ -174,11 +178,9 @@ const registrarJugador = async (req, res) => {
     const usuarioId = req.usuario?.id || req.body.usuarioId;
 
     if (!dni || !nombre || !apellido || !fechaNacimiento || !genero) {
-      return res
-        .status(400)
-        .json({
-          error: "Todos los datos esenciales del atleta son requeridos.",
-        });
+      return res.status(400).json({
+        error: "Todos los datos esenciales del atleta son requeridos.",
+      });
     }
 
     if (
@@ -187,19 +189,11 @@ const registrarJugador = async (req, res) => {
       !req.files["dniDorso"] ||
       !req.files["fichaMedica"]
     ) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "Documentación incompleta. Debe adjuntar los 3 archivos obligatorios.",
-        });
+      return res.status(400).json({
+        error:
+          "Documentación incompleta. Debe adjuntar los 3 archivos obligatorios.",
+      });
     }
-
-    const urlDniFrente = `/uploads/documentos/${req.files["dniFrente"][0].filename}`;
-    const urlDniDorso = `/uploads/documentos/${req.files["dniDorso"][0].filename}`;
-    const urlFichaMedica = `/uploads/documentos/${req.files["fichaMedica"][0].filename}`;
-
-    archivosSubidos = [urlDniFrente, urlDniDorso, urlFichaMedica];
 
     const equipo = await prisma.equipo.findUnique({
       where: { usuarioId: parseInt(usuarioId) },
@@ -207,23 +201,48 @@ const registrarJugador = async (req, res) => {
     });
 
     if (!equipo) {
-      archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(400)
-        .json({
-          error:
-            "Primero debe dar de alta su delegación antes de inscribir atletas.",
-        });
+      if (req.files) {
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      }
+      return res.status(400).json({
+        error:
+          "Primero debe dar de alta su delegación antes de inscribir atletas.",
+      });
     }
+
+    // 🚀 CONTROL REGLAMENTARIO DE CUD (DEPORTE ADAPTADO)
+    const esAdaptado = equipo.disciplina.tipo === "ADAPTADO";
+    if (esAdaptado && (!req.files["cud"] || req.files["cud"].length === 0)) {
+      if (req.files) {
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      }
+      return res.status(400).json({
+        error:
+          "Inscripción Rechazada. El Certificado Único de Discapacidad (CUD) es obligatorio para disciplinas de Deporte Adaptado.",
+      });
+    }
+
+    const urlDniFrente = `/uploads/documentos/${req.files["dniFrente"][0].filename}`;
+    const urlDniDorso = `/uploads/documentos/${req.files["dniDorso"][0].filename}`;
+    const urlFichaMedica = `/uploads/documentos/${req.files["fichaMedica"][0].filename}`;
+    const urlCud =
+      esAdaptado && req.files["cud"]
+        ? `/uploads/documentos/${req.files["cud"][0].filename}`
+        : null;
+
+    archivosSubidos = [urlDniFrente, urlDniDorso, urlFichaMedica];
+    if (urlCud) archivosSubidos.push(urlCud);
 
     const pruebaTargetId = idPrueba1 ? parseInt(idPrueba1) : null;
     if (!pruebaTargetId) {
       archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(400)
-        .json({
-          error: "Debe seleccionar una prueba específica de competencia.",
-        });
+      return res.status(400).json({
+        error: "Debe seleccionar una prueba específica de competencia.",
+      });
     }
 
     const pruebaEspecifica = await prisma.pruebaEspecifica.findUnique({
@@ -243,11 +262,51 @@ const registrarJugador = async (req, res) => {
       anioNacimientoAtleta > pruebaEspecifica.anioNacimientoMax
     ) {
       archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(400)
-        .json({
-          error: `Inscripción rechazada. Rango de edad inválido para esta categoría.`,
+      return res.status(400).json({
+        error: `Edad no permitida. Para la prueba "${pruebaEspecifica.nombrePrueba}", el atleta debe haber nacido entre ${pruebaEspecifica.anioNacimientoMin} y ${pruebaEspecifica.anioNacimientoMax} (Año ingresado: ${anioNacimientoAtleta}).`,
+      });
+    }
+
+    if (pruebaEspecifica.requierePeso) {
+      if (!peso || parseFloat(peso) <= 0) {
+        archivosSubidos.forEach(borrarArchivoFisico);
+        return res.status(400).json({
+          error: `El peso corporal es obligatorio para competir en la prueba "${pruebaEspecifica.nombrePrueba}".`,
         });
+      }
+
+      const pesoIngresado = parseFloat(peso);
+      const pesoMaximoPermitido = parseFloat(pruebaEspecifica.pesoMaximo);
+      let pesoMinimoPermitido = 0;
+
+      const rangoPesoMatch = pruebaEspecifica.nombrePrueba.match(
+        /(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)/,
+      );
+
+      if (rangoPesoMatch) {
+        pesoMinimoPermitido = parseFloat(rangoPesoMatch[1]);
+      } else if (
+        pruebaEspecifica.nombrePrueba.toLowerCase().includes("más de")
+      ) {
+        const minimoMatch = pruebaEspecifica.nombrePrueba.match(
+          /más de (\d+(?:\.\d+)?)/i,
+        );
+        if (minimoMatch) pesoMinimoPermitido = parseFloat(minimoMatch[1]);
+      }
+
+      if (pesoIngresado < pesoMinimoPermitido) {
+        archivosSubidos.forEach(borrarArchivoFisico);
+        return res.status(400).json({
+          error: `Peso insuficiente. El peso mínimo para la categoría "${pruebaEspecifica.nombrePrueba}" es de ${pesoMinimoPermitido} kg (Peso ingresado: ${pesoIngresado} kg).`,
+        });
+      }
+
+      if (pesoMaximoPermitido && pesoIngresado > pesoMaximoPermitido) {
+        archivosSubidos.forEach(borrarArchivoFisico);
+        return res.status(400).json({
+          error: `Exceso de peso. El peso máximo para la categoría "${pruebaEspecifica.nombrePrueba}" es de ${pesoMaximoPermitido} kg (Peso ingresado: ${pesoIngresado} kg).`,
+        });
+      }
     }
 
     const cantidadActual = await prisma.deportista.count({
@@ -256,11 +315,9 @@ const registrarJugador = async (req, res) => {
 
     if (cantidadActual >= pruebaEspecifica.maxJugadores) {
       archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(400)
-        .json({
-          error: `Cupo Máximo Alcanzado para la modalidad seleccionada.`,
-        });
+      return res.status(400).json({
+        error: "Cupo Máximo Alcanzado para la modalidad seleccionada.",
+      });
     }
 
     const atletaDuplicadoEnEquipo = await prisma.deportista.findUnique({
@@ -269,35 +326,18 @@ const registrarJugador = async (req, res) => {
 
     if (atletaDuplicadoEnEquipo) {
       archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(400)
-        .json({
-          error: "Este deportista ya se encuentra pre-inscripto en su equipo.",
-        });
+      return res.status(400).json({
+        error: "Este deportista ya se encuentra pre-inscripto en su equipo.",
+      });
     }
 
-    const participacionesTotales = await prisma.deportista.count({
-      where: { dni: dni.trim() },
-    });
-
-    if (participacionesTotales >= 2) {
-      archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(400)
-        .json({
-          error:
-            "El atleta ya alcanzó el límite reglamentario de dos (2) disciplinas.",
-        });
-    }
-
-    // Insertar con soporte idPrueba2 e inyectar el include relacional 🚀
     const nuevoDeportista = await prisma.deportista.create({
       data: {
         dni: dni.trim(),
         nombre: nombre.trim(),
         apellido: apellido.trim(),
         fechaNacimiento: new Date(fechaNacimiento),
-        genero: pruebaEspecifica.genero,
+        genero: genero,
         deporteAsignado: equipo.disciplina.nombre,
         pesoKg: peso ? parseFloat(peso) : null,
         alturaCm: altura ? parseInt(altura) : null,
@@ -305,14 +345,14 @@ const registrarJugador = async (req, res) => {
         urlDniFrente: urlDniFrente,
         urlDniDorso: urlDniDorso,
         urlFichaMedica: urlFichaMedica,
+        urlCud: urlCud,
         equipo: { connect: { id: equipo.id } },
         prueba: { connect: { id: pruebaEspecifica.id } },
-        idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null, // Persistido en el modelo físico
+        idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null,
       },
       include: { prueba: true },
     });
 
-    // Resolvemos el nombre de la segunda prueba para el unshift inmediato de Angular
     let nombreSegundaPrueba = null;
     if (nuevoDeportista.idPrueba2) {
       const p2 = await prisma.pruebaEspecifica.findUnique({
@@ -331,17 +371,14 @@ const registrarJugador = async (req, res) => {
   } catch (error) {
     console.error("❌ ERROR CRÍTICO AL INSERTAR: LIMPIANDO DISCO...", error);
     archivosSubidos.forEach(borrarArchivoFisico);
-
-    return res.status(500).json({
-      error:
-        "Error interno al procesar el alta. Se canceló la subida de archivos.",
-      detalle: error.message,
-    });
+    return res
+      .status(500)
+      .json({ error: "Error interno al procesar el alta." });
   }
 };
 
 // =========================================================================
-// D. Modificar Datos de un Atleta (Campos de Texto/Biométricos)
+// D. Modificar Datos de un Atleta
 // =========================================================================
 const editarJugador = async (req, res) => {
   try {
@@ -380,7 +417,7 @@ const editarJugador = async (req, res) => {
         pesoKg: peso ? parseFloat(peso) : null,
         alturaCm: altura ? parseInt(altura) : null,
         idPrueba: idPrueba1 ? parseInt(idPrueba1) : atletaExistente.idPrueba,
-        idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null, // Actualiza o remueve la segunda prueba
+        idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null,
       },
       include: { prueba: true },
     });
@@ -392,7 +429,29 @@ const editarJugador = async (req, res) => {
       });
       nombreSegundaPrueba = p2 ? p2.nombrePrueba : null;
     }
+    const pruebaIdValidar = idPrueba1
+      ? parseInt(idPrueba1)
+      : atletaExistente.idPrueba;
+    const pruebaData = await prisma.pruebaEspecifica.findUnique({
+      where: { id: pruebaIdValidar },
+    });
 
+    if (pruebaData && pruebaData.requierePeso && peso) {
+      const pesoIngresado = parseFloat(peso);
+      const pesoMax = parseFloat(pruebaData.pesoMaximo);
+      let pesoMin = 0;
+
+      const rangoMatch = pruebaData.nombrePrueba.match(
+        /(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)/,
+      );
+      if (rangoMatch) pesoMin = parseFloat(rangoMatch[1]);
+
+      if (pesoIngresado < pesoMin || (pesoMax && pesoIngresado > pesoMax)) {
+        return res.status(400).json({
+          error: `El peso ingresado (${pesoIngresado} kg) no corresponde al rango oficial de la categoría: ${pruebaData.nombrePrueba}.`,
+        });
+      }
+    }
     return res.status(200).json({
       mensaje: "Ficha del deportista modificada con éxito.",
       jugador: {
@@ -402,20 +461,18 @@ const editarJugador = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ ERROR EN EDICIÓN DE ATLETA:", error);
-    return res.status(500).json({
-      error: "Error interno al modificar la ficha.",
-      detalle: error.message,
-    });
+    return res
+      .status(500)
+      .json({ error: "Error interno al modificar la ficha." });
   }
 };
 
 // =========================================================================
-// E. Dar de Baja Atleta y Limpiar Disco Físico Automáticamente 🗑️
+// E. Dar de Baja Atleta
 // =========================================================================
 const eliminarJugador = async (req, res) => {
   try {
     const { id } = req.params;
-
     const atleta = await prisma.deportista.findUnique({ where: { id } });
     if (!atleta) {
       return res
@@ -426,6 +483,7 @@ const eliminarJugador = async (req, res) => {
     borrarArchivoFisico(atleta.urlDniFrente);
     borrarArchivoFisico(atleta.urlDniDorso);
     borrarArchivoFisico(atleta.urlFichaMedica);
+    if (atleta.urlCud) borrarArchivoFisico(atleta.urlCud);
 
     await prisma.deportista.delete({ where: { id } });
 
@@ -435,14 +493,12 @@ const eliminarJugador = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ ERROR EN ELIMINAR ATLETA:", error);
-    return res.status(500).json({
-      error: "No se pudo procesar la baja del deportista.",
-      detalle: error.message,
-    });
+    return res
+      .status(500)
+      .json({ error: "No se pudo procesar la baja del deportista." });
   }
 };
 
-// Helper de borrado físico en el disco
 const borrarArchivoFisico = (rutaRelativaWeb) => {
   if (!rutaRelativaWeb) return;
   const rutaAbsoluta = path.join(__dirname, "../../", rutaRelativaWeb);

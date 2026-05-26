@@ -35,7 +35,10 @@ require("./services/limpiezaService");
 app.use("/api/auth", authRoutes);
 app.use("/api/delegacion", equipoRoutes);
 app.use("/api/auditoria", auditoriaRoutes);
+
+// ELIMINASTE EL "const" DE AQUÍ ABAJO PARA NO DUPLICAR
 app.use("/api/reportes", excelRoutes);
+
 app.use("/api/admin", adminRoutes); // Enlazado con obtenerArbolDelegaciones y dictaminarAtleta
 
 // Ruta de prueba protegida por rol para verificar que todo funcione
@@ -45,7 +48,13 @@ app.get("/api/prueba-admin", verificarRol(["ADMIN"]), (req, res) => {
     mensaje: "Si ves esto, eres ADMIN y tu JWT funciona correctamente.",
   });
 });
+// ... Todo tu código inicial de app.js se mantiene idéntico
 
+// 🚀 REGISTRO DEL NUEVO MÓDULO DE MUNICIPIO (AGREGAR ESTE BLOQUE):
+const municipioRoutes = require("./routes/municipioRoutes");
+app.use("/api/municipio", municipioRoutes);
+
+// ... El resto del código de app.js (Ruta de prueba, PORT, app.listen) se queda igual
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`◈===========================================================◈`);

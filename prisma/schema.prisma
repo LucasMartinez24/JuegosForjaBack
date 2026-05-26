@@ -11,15 +11,19 @@ datasource db {
 }
 
 // 1. Manejo de Usuarios y Roles (Autenticación por JWT)
+// Modificar únicamente el modelo Usuario en prisma/schema.prisma
+
 model Usuario {
   id                Int      @id @default(autoincrement())
-  email             String   @unique
+  username          String   @unique @db.VarChar(50) // <-- NUEVO IDENTIFICADOR ÚNICO
+  email             String?  @unique // Se vuelve opcional por si se requiere recuperación a futuro
   passwordHash      String   @map("password_hash")
   rol               Rol
-  dni               String   @unique @db.VarChar(20) // <-- NUEVO CAMPO AGREGADO
+  dni               String   @unique @db.VarChar(20)
   nombre            String   @db.VarChar(100)
   apellido          String   @db.VarChar(100)
-  municipioAsignado String?  @map("municipio_assigned")
+  idLocalidad       Int?     @map("id_localidad")
+  localidad         Localidad?  @relation(fields: [idLocalidad], references: [id])
   
   equipo            Equipo?
 
@@ -63,6 +67,7 @@ enum TipoDisciplina {
     maxJugadores      Int       @map("max_jugadores") // El tope estricto de la lista de buena fe para ESA prueba
     requierePeso      Boolean   @default(false) @map("requiere_peso")
     pesoMaximo        Decimal?  @db.Decimal(5,2) @map("peso_maximo") // Para deportes de combate/levantamiento
+    pesoMinimo        Decimal?  @db.Decimal(5,2) @map("peso_minimo")
     subCategoria      String?   @map("sub_categoria") @db.VarChar(100) // Ej: "Intelectual", "BC1", "Slalom", "No Federados"
 
     deportistas       Deportista[]
@@ -72,21 +77,22 @@ enum TipoDisciplina {
 
 // 3. Cabecera del Equipo / Inscripción de la Delegación
 model Equipo {
-  id           String     @id @default(uuid())
-  nombre       String     @db.VarChar(150)
-  siglas       String     @unique @db.VarChar(10)
-  municipio    String     @db.VarChar(100)
-  idDisciplina Int        @map("id_disciplina")
-  disciplina   Disciplina @relation(fields: [idDisciplina], references: [id])
-  usuarioId    Int        @unique @map("usuario_id")
-  usuario      Usuario    @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-
+  id           String       @id @default(cuid())
+  nombre       String
+  siglas       String
+  municipio    String
+  idDisciplina Int          @map("id_disciplina")
+  usuarioId    Int          @unique @map("usuario_id")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  
+  // Relaciones
+  disciplina   Disciplina   @relation(fields: [idDisciplina], references: [id])
+  usuario      Usuario      @relation(fields: [usuarioId], references: [id])
   deportistas  Deportista[]
 
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
-
-  @@map("equipos")
+  // 🚀 LA LÍNEA CLAVE: Vincula el modelo con la tabla física real
+  @@map("equipo") 
 }
 
 // 4. Detalle Individual de cada Deportista, Información Deportiva y su Documentación
@@ -127,7 +133,35 @@ model Deportista {
   @@index([idPrueba])
   @@map("deportistas")
 }
+// Agregar estos modelos a tu prisma/schema.prisma
 
+model Localidad {
+  id        Int           @id @default(autoincrement())
+  nombre    String        @unique @db.VarChar(100) // Ej: "Palpalá" o "Huacalera"
+  tipo      TipoLocalidad
+  
+  // Relaciones relacionales
+  usuarios  Usuario[]
+  tokens    TokenInvitacion[]
+
+  @@map("localidades")
+}
+
+enum TipoLocalidad {
+  MUNICIPALIDAD
+  COMISION_MUNICIPAL
+}
+
+model TokenInvitacion {
+  id          Int       @id @default(autoincrement())
+  token       String    @unique @db.VarChar(64) // Token alfanumérico único
+  idLocalidad Int       @map("id_localidad")
+  localidad   Localidad @relation(fields: [idLocalidad], references: [id], onDelete: Cascade)
+  utilizado   Boolean   @default(false)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("tokens_invitacion")
+}
 enum Genero {
   MASCULINO
   FEMENINO
