@@ -19,7 +19,10 @@ const app = express();
 // 1. CORS configurado con el dominio real de Juegos Forja
 app.use(
   cors({
-    origin: "https://juegosforja.online", // 🔥 Cambiado al dominio de producción
+    origin: [
+      "https://juegosforja.online",
+      "https://www.juegosforja.online", // 🔥 Agregamos la variante con WWW
+    ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
