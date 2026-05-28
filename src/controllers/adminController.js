@@ -354,7 +354,65 @@ const generarTokenMunicipio = async (req, res) => {
     });
   }
 };
+const obtenerDelegadoPorEquipo = async (req, res) => {
+  try {
+    const { idEquipo } = req.params;
 
+    // Buscamos el equipo pero incluyendo los campos exactos del usuario responsable
+    const equipo = await prisma.equipo.findUnique({
+      where: { id: idEquipo },
+      select: {
+        usuario: {
+          select: {
+            nombre: true,
+            apellido: true,
+            dni: true,
+            urlDniFrente: true,
+            urlDniDorso: true,
+          },
+        },
+      },
+    });
+
+    if (!equipo || !equipo.usuario) {
+      return res.status(404).json({
+        error: "No se encontró un representante asociado a esta delegación.",
+      });
+    }
+
+    // Retornamos el formato exacto que tu HTML está esperando leer (usuarioResponsable)
+    return res.status(200).json({
+      usuarioResponsable: equipo.usuario,
+    });
+  } catch (error) {
+    console.error("❌ ERROR AL OBTENER DELEGADO:", error);
+    return res.status(500).json({
+      error: "Error interno al recuperar los datos del representante.",
+    });
+  }
+};
+const borrarArchivoFisico = (rutaRelativaWeb) => {
+  if (!rutaRelativaWeb) return;
+
+  // Requerimos path y fs de forma segura si no los tenías arriba
+  const fs = require("fs");
+  const path = require("path");
+
+  const rutaAbsoluta = path.join(__dirname, "../../", rutaRelativaWeb);
+
+  if (fs.existsSync(rutaAbsoluta)) {
+    fs.unlink(rutaAbsoluta, (err) => {
+      if (err) {
+        console.error(
+          `⚠️ No se pudo eliminar el archivo físico en ${rutaAbsoluta}:`,
+          err,
+        );
+      } else {
+        console.log(`🗑️ Archivo purgado con éxito: ${rutaAbsoluta}`);
+      }
+    });
+  }
+};
 // No olvides exportarlos al final de tu archivo:
 module.exports = {
   obtenerArbolDelegaciones,
@@ -362,5 +420,6 @@ module.exports = {
   eliminarEquipoPorAuditoria,
   obtenerLocalidadesYTokens, // <-- Agregar
   crearUsuarioMunicipio, // <-- Agregar
-  generarTokenMunicipio, // <-- Agregar
+  generarTokenMunicipio,
+  obtenerDelegadoPorEquipo, // <-- Agregar
 };

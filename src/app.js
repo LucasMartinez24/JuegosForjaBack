@@ -9,6 +9,7 @@ const equipoRoutes = require("./routes/equipoRoutes");
 const auditoriaRoutes = require("./routes/auditoriaRoutes");
 const excelRoutes = require("./routes/excelRoutes");
 const adminRoutes = require("./routes/adminRoutes");
+const municipioRoutes = require("./routes/municipioRoutes");
 
 const app = express();
 
@@ -16,12 +17,13 @@ const app = express();
 // MIDDLEWARES GLOBALES 🚀
 // =========================================================================
 
-// 1. CORS configurado con el dominio real de Juegos Forja
+// 1. CORS configurado con soporte multientorno para los Juegos Forja
 app.use(
   cors({
     origin: [
       "https://juegosforja.online",
-      "https://www.juegosforja.online", // 🔥 Agregamos la variante con WWW
+      "https://www.juegosforja.online",
+      "http://localhost:4200",
     ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
@@ -30,7 +32,7 @@ app.use(
       "X-Requested-With",
       "Accept",
     ],
-    credentials: true, // Habilitado para manejo seguro de tokens/headers
+    credentials: true, // Habilitado para manejo seguro de tokens/headers en cookies o auth-payloads
   }),
 );
 
@@ -38,21 +40,27 @@ app.use(express.json());
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
-// 2. 🔥 EL MIDDLEWARE MÁGICO PARA LAS FOTOS Y DOCUMENTOS
-// Parchea los JSON en el aire para que Angular reciba URLs absolutas automáticas
+// 2. 🧠 MIDDLEWARE INTELIGENTE DE URLS ABSOLUTAS (LOCAL vs PRODUCCIÓN)
+// Intercepta los JSON de salida y les pega dinámicamente el host que hace la petición
 app.use((req, res, next) => {
   const originalJson = res.json;
   res.json = function (data) {
     let jsonString = JSON.stringify(data);
 
     if (jsonString && jsonString.includes("/uploads/")) {
-      // Usa la variable APP_URL de tu .env (https://api.juegosforja.online)
-      const apiUrL = process.env.APP_URL || "https://api.juegosforja.online";
+      // Detecta de forma elástica si corre en HTTP local o HTTPS en la nube VPS
+      const protocolo =
+        req.secure || req.headers["x-forwarded-proto"] === "https"
+          ? "https"
+          : "http";
+      const host = req.get("host"); // Captura dinámicamente "localhost:3000" o "api.juegosforja.online"
+      const urlBaseDinamica = `${protocolo}://${host}`;
 
-      // Evita duplicar si por alguna razón ya viene con la URL armada
+      // Reemplaza la ruta relativa por la URL absoluta calculada en tiempo real.
+      // La expresión regular evita duplicaciones si la URL ya cuenta con un protocolo inyectado previo.
       jsonString = jsonString.replace(
-        /(?!"https:\/\/api.juegosforja.online")\/uploads\//g,
-        `${apiUrL}/uploads/`,
+        /(?!https?:\/\/[^\s"'>]+)\/uploads\//g,
+        `${urlBaseDinamica}/uploads/`,
       );
     }
 
@@ -61,21 +69,23 @@ app.use((req, res, next) => {
   next();
 });
 
-// 📁 SERVIDOR ESTÁTICO DE ARCHIVOS DE AUDITORÍA
+// 📁 SERVIDOR ESTÁTICO DE ARCHIVOS DE AUDITORÍA Y COMPROBANTES DE DELEGADOS
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
-// Servicios en segundo plano
+// Servicios en segundo plano (Mantenimiento periódico)
 require("./services/limpiezaService");
 
 // =========================================================================
-// REGISTRO DE RUTAS INSTITUCIONALES (El resto queda exactamente igual)
+// REGISTRO DE RUTAS INSTITUCIONALES 🛡️
 // =========================================================================
 app.use("/api/auth", authRoutes);
 app.use("/api/delegacion", equipoRoutes);
 app.use("/api/auditoria", auditoriaRoutes);
 app.use("/api/reportes", excelRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/municipio", municipioRoutes);
 
+// Endpoint opcional de verificación de estado y token para Administradores centrales
 const { verificarRol } = require("./middlewares/auth");
 app.get("/api/prueba-admin", verificarRol(["ADMIN"]), (req, res) => {
   res.json({
@@ -83,9 +93,9 @@ app.get("/api/prueba-admin", verificarRol(["ADMIN"]), (req, res) => {
   });
 });
 
-const municipioRoutes = require("./routes/municipioRoutes");
-app.use("/api/municipio", municipioRoutes);
-
+// =========================================================================
+// APERTURA DEL PUERTO OPERATIVO
+// =========================================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`◈===========================================================◈`);

@@ -158,7 +158,7 @@ const registrarEquipo = async (req, res) => {
 };
 
 // =========================================================================
-// C. Registrar Deportista con Soporte de CUD para Adaptado
+// C. Registrar Deportista con Soporte de CUD y Cupos Ilimitados para Atletismo
 // =========================================================================
 const registrarJugador = async (req, res) => {
   let archivosSubidos = [];
@@ -212,7 +212,6 @@ const registrarJugador = async (req, res) => {
       });
     }
 
-    // 🚀 CONTROL REGLAMENTARIO DE CUD (DEPORTE ADAPTADO)
     const esAdaptado = equipo.disciplina.tipo === "ADAPTADO";
     if (esAdaptado && (!req.files["cud"] || req.files["cud"].length === 0)) {
       if (req.files) {
@@ -222,7 +221,7 @@ const registrarJugador = async (req, res) => {
       }
       return res.status(400).json({
         error:
-          "Inscripción Rechazada. El Certificado Único de Discapacidad (CUD) es obligatorio para disciplinas de Deporte Adaptado.",
+          "Inscripción Adenegada. El Certificado Único de Discapacidad (CUD) es obligatorio para disciplinas de Deporte Adaptado.",
       });
     }
 
@@ -284,7 +283,7 @@ const registrarJugador = async (req, res) => {
       );
 
       if (rangoPesoMatch) {
-        pesoMinimoPermitido = parseFloat(rangoPesoMatch[1]);
+        postalMinimoPermitido = parseFloat(rangoPesoMatch[1]);
       } else if (
         pruebaEspecifica.nombrePrueba.toLowerCase().includes("más de")
       ) {
@@ -309,15 +308,21 @@ const registrarJugador = async (req, res) => {
       }
     }
 
-    const cantidadActual = await prisma.deportista.count({
-      where: { idEquipo: equipo.id, idPrueba: pruebaEspecifica.id },
-    });
-
-    if (cantidadActual >= pruebaEspecifica.maxJugadores) {
-      archivosSubidos.forEach(borrarArchivoFisico);
-      return res.status(400).json({
-        error: "Cupo Máximo Alcanzado para la modalidad seleccionada.",
+    // 🚀 CONTROL DE CUPOS INTERCEPTADO: Excepción para Atletismo
+    const esDisciplinaAtletismo = equipo.disciplina.nombre
+      .toUpperCase()
+      .includes("ATLETISMO");
+    if (!esDisciplinaAtletismo) {
+      const cantidadActual = await prisma.deportista.count({
+        where: { idEquipo: equipo.id, idPrueba: pruebaEspecifica.id },
       });
+
+      if (cantidadActual >= pruebaEspecifica.maxJugadores) {
+        archivosSubidos.forEach(borrarArchivoFisico);
+        return res.status(400).json({
+          error: "Cupo Máximo Alcanzado para la modalidad seleccionada.",
+        });
+      }
     }
 
     const atletaDuplicadoEnEquipo = await prisma.deportista.findUnique({
@@ -468,34 +473,79 @@ const editarJugador = async (req, res) => {
 };
 
 // =========================================================================
-// E. Dar de Baja Atleta
+// E. Dar de Baja Atleta / Eliminar Delegación Falsa por Completo
 // =========================================================================
 const eliminarJugador = async (req, res) => {
   try {
     const { id } = req.params;
-    const atleta = await prisma.deportista.findUnique({ where: { id } });
-    if (!atleta) {
-      return res
-        .status(404)
-        .json({ error: "El atleta que intenta dar de baja no existe." });
+
+    // 🚀 CONTROL CLAVE: Chequeamos primero si el ID recibido es de un EQUIPO o de un JUGADOR
+    const esBajaDeEquipoCompleto = id.startsWith("c"); // Los CUID de Prisma para Equipo arrancan con 'c'
+
+    if (esBajaDeEquipoCompleto) {
+      const equipo = await prisma.equipo.findUnique({
+        where: { id: id },
+        include: { deportistas: true, usuario: true },
+      });
+
+      if (!equipo) {
+        return res
+          .status(404)
+          .json({ error: "La delegación que intenta auditar no existe." });
+      }
+
+      // 1. Limpiamos todos los archivos físicos de los deportistas asociados
+      equipo.deportistas.forEach((atleta) => {
+        borrarArchivoFisico(atleta.urlDniFrente);
+        borrarArchivoFisico(atleta.urlDniDorso);
+        borrarArchivoFisico(atleta.urlFichaMedica);
+        if (atleta.urlCud) borrarArchivoFisico(atleta.urlCud);
+      });
+
+      // 2. Limpiamos los archivos de los DNI del Representante de la cuenta
+      if (equipo.usuario) {
+        borrarArchivoFisico(equipo.usuario.urlDniFrente);
+        borrarArchivoFisico(equipo.usuario.urlDniDorso);
+      }
+
+      // 3. Ejecutamos la remoción física de la base de datos (Garantiza integridad)
+      await prisma.equipo.delete({ where: { id: id } });
+
+      // 4. Barremos el usuario credencial para liberar el DNI/Username para un re-registro legítimo
+      if (equipo.usuarioId) {
+        await prisma.usuario.delete({ where: { id: equipo.usuarioId } });
+      }
+
+      return res.status(200).json({
+        mensaje:
+          "Delegación removida de la liga, credenciales liberadas y espacio en disco purgado con éxito.",
+      });
+    } else {
+      // Flujo tradicional: Baja individual de un atleta de la grilla
+      const atleta = await prisma.deportista.findUnique({ where: { id } });
+      if (!atleta) {
+        return res
+          .status(404)
+          .json({ error: "El atleta que intenta dar de baja no existe." });
+      }
+
+      borrarArchivoFisico(atleta.urlDniFrente);
+      borrarArchivoFisico(atleta.urlDniDorso);
+      borrarArchivoFisico(atleta.urlFichaMedica);
+      if (atleta.urlCud) borrarArchivoFisico(atleta.urlCud);
+
+      await prisma.deportista.delete({ where: { id } });
+
+      return res.status(200).json({
+        mensaje:
+          "Atleta removido del roster provincial y espacio en disco liberado.",
+      });
     }
-
-    borrarArchivoFisico(atleta.urlDniFrente);
-    borrarArchivoFisico(atleta.urlDniDorso);
-    borrarArchivoFisico(atleta.urlFichaMedica);
-    if (atleta.urlCud) borrarArchivoFisico(atleta.urlCud);
-
-    await prisma.deportista.delete({ where: { id } });
-
-    return res.status(200).json({
-      mensaje:
-        "Atleta removido del roster provincial y espacio en disco liberado.",
-    });
   } catch (error) {
-    console.error("❌ ERROR EN ELIMINAR ATLETA:", error);
+    console.error("❌ ERROR EN ELIMINAR REGISTRO:", error);
     return res
       .status(500)
-      .json({ error: "No se pudo procesar la baja del deportista." });
+      .json({ error: "No se pudo procesar la remoción física del elemento." });
   }
 };
 

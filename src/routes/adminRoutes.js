@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const adminController = require("../controllers/adminController");
+const { verificarRol } = require("../middlewares/auth");
 // const { verificarToken, verificarAdmin } = require("../middlewares/authMiddleware");
 // (Usa tus middlewares si los tenés activos)
 
@@ -23,5 +24,9 @@ router.delete(
   "/eliminar-equipo/:idEquipo",
   adminController.eliminarEquipoPorAuditoria,
 );
-
+router.get(
+  "/equipo-delegado/:idEquipo",
+  verificarRol(["ADMIN", "MUNICIPIO"]),
+  adminController.obtenerDelegadoPorEquipo,
+);
 module.exports = router;

@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 generator client {
   provider   = "prisma-client-js"
   engineType = "binary"
@@ -7,75 +5,60 @@ generator client {
 
 datasource db {
   provider = "mysql"
-  // Se inyecta desde prisma.config.js de manera dinámica
 }
 
-// 1. Manejo de Usuarios y Roles (Autenticación por JWT)
-// Modificar únicamente el modelo Usuario en prisma/schema.prisma
-
 model Usuario {
-  id                Int      @id @default(autoincrement())
-  username          String   @unique @db.VarChar(50) // <-- NUEVO IDENTIFICADOR ÚNICO
-  email             String?  @unique // Se vuelve opcional por si se requiere recuperación a futuro
-  passwordHash      String   @map("password_hash")
-  rol               Rol
-  dni               String   @unique @db.VarChar(20)
-  nombre            String   @db.VarChar(100)
-  apellido          String   @db.VarChar(100)
-  idLocalidad       Int?     @map("id_localidad")
-  localidad         Localidad?  @relation(fields: [idLocalidad], references: [id])
+  id                     Int         @id @default(autoincrement())
+  username               String      @unique @db.VarChar(50)
+  email                  String?     @unique
+  passwordHash           String      @map("password_hash")
+  rol                    Rol
+  dni                    String      @unique @db.VarChar(20)
+  nombre                 String      @db.VarChar(100)
+  apellido               String      @db.VarChar(100)
+  idLocalidad            Int?        @map("id_localidad")
+  requiereCambioPassword Boolean     @default(true) @map("requiere_cambio_password")
   
-  equipo            Equipo?
+  // 🚀 NUEVOS CAMPOS: Documentación del Representante de la Delegación
+  urlDniFrente           String?     @map("url_dni_frente") @db.VarChar(255)
+  urlDniDorso            String?     @map("url_dni_dorso") @db.VarChar(255)
+  
+  equipo                 Equipo?
+  localidad              Localidad?  @relation(fields: [idLocalidad], references: [id])
 
+  @@index([idLocalidad], map: "usuarios_id_localidad_fkey")
   @@map("usuarios")
 }
 
-enum Rol {
-  ADMIN
-  MUNICIPIO
-  EQUIPO
-}
-
-// 2. Catálogo Maestro de Disciplinas Generales
 model Disciplina {
-  id           Int              @id @default(autoincrement())
-  nombre       String           @unique @db.VarChar(100) // Ej: "BOXEO", "ATLETISMO", "BOCCIA"
-  tipo         TipoDisciplina
-  
-  // Relación con sus subdivisiones obligatorias de inscripción
-  pruebas      PruebaEspecifica[]
-  equipos      Equipo[]
+  id      Int              @id @default(autoincrement())
+  nombre  String           @unique @db.VarChar(100)
+  tipo    TipoDisciplina
+  equipos Equipo[]
+  pruebas PruebaEspecifica[]
 
   @@map("disciplinas")
 }
 
-enum TipoDisciplina {
-  CONVENCIONAL
-  ADAPTADO
+model PruebaEspecifica {
+  id                Int          @id @default(autoincrement())
+  idDisciplina      Int          @map("id_disciplina")
+  nombrePrueba      String       @map("nombre_prueba") @db.VarChar(150)
+  genero            Genero
+  anioNacimientoMin Int          @map("anio_nacimiento_min")
+  anioNacimientoMax Int          @map("anio_nacimiento_max")
+  maxJugadores      Int          @map("max_jugadores")
+  requierePeso      Boolean      @default(false) @map("requiere_peso")
+  pesoMaximo        Decimal?     @map("peso_maximo") @db.Decimal(5, 2)
+  pesoMinimo        Decimal?     @map("peso_minimo") @db.Decimal(5, 2)
+  subCategoria      String?      @map("sub_categoria") @db.VarChar(100)
+  deportistas       Deportista[]
+  disciplina        Disciplina   @relation(fields: [idDisciplina], references: [id], onDelete: Cascade)
+
+  @@index([idDisciplina], map: "pruebas_especificas_id_disciplina_fkey")
+  @@map("pruebas_especificas")
 }
 
-// NUEVO MODELO: El desglose milimétrico del Word
-  model PruebaEspecifica {
-    id                Int       @id @default(autoincrement())
-    idDisciplina      Int       @map("id_disciplina")
-    disciplina        Disciplina @relation(fields: [idDisciplina], references: [id], onDelete: Cascade)
-    
-    nombrePrueba      String    @map("nombre_prueba") @db.VarChar(150) // Ej: "Masculino: 52-54 kg" o "Salto en Largo (Ciegos)"
-    genero            Genero
-    anioNacimientoMin Int       @map("anio_nacimiento_min")
-    anioNacimientoMax Int       @map("anio_nacimiento_max")
-    maxJugadores      Int       @map("max_jugadores") // El tope estricto de la lista de buena fe para ESA prueba
-    requierePeso      Boolean   @default(false) @map("requiere_peso")
-    pesoMaximo        Decimal?  @db.Decimal(5,2) @map("peso_maximo") // Para deportes de combate/levantamiento
-    pesoMinimo        Decimal?  @db.Decimal(5,2) @map("peso_minimo")
-    subCategoria      String?   @map("sub_categoria") @db.VarChar(100) // Ej: "Intelectual", "BC1", "Slalom", "No Federados"
-
-    deportistas       Deportista[]
-
-    @@map("pruebas_especificas")
-  }
-
-// 3. Cabecera del Equipo / Inscripción de la Delegación
 model Equipo {
   id           String       @id @default(cuid())
   nombre       String
@@ -85,27 +68,19 @@ model Equipo {
   usuarioId    Int          @unique @map("usuario_id")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
-  
-  // Relaciones
+  deportistas  Deportista[]
   disciplina   Disciplina   @relation(fields: [idDisciplina], references: [id])
   usuario      Usuario      @relation(fields: [usuarioId], references: [id])
-  deportistas  Deportista[]
 
-  // 🚀 LA LÍNEA CLAVE: Vincula el modelo con la tabla física real
-  @@map("equipo") 
+  @@index([idDisciplina], map: "equipo_id_disciplina_fkey")
+  @@map("equipo")
 }
-
-// 4. Detalle Individual de cada Deportista, Información Deportiva y su Documentación
-// prisma/schema.prisma -> Modelo Deportista corregido
 
 model Deportista {
   id              String            @id @default(uuid())
   idEquipo        String            @map("id_equipo")
   idPrueba        Int               @map("id_prueba")
-  
-  // 🚀 ADJUNTAMOS LA SEGUNDA PRUEBA COMO UN ENTERO OPCIONAL
-  idPrueba2       Int?              @map("id_prueba_2") 
-  
+  idPrueba2       Int?              @map("id_prueba_2")
   dni             String            @db.VarChar(20)
   nombre          String            @db.VarChar(100)
   apellido        String            @db.VarChar(100)
@@ -113,38 +88,55 @@ model Deportista {
   genero          Genero
   deporteAsignado String            @map("deporte_assigned") @db.VarChar(100)
   whatsapp        String?           @db.VarChar(30)
-  pesoKg          Decimal?          @db.Decimal(5, 2) @map("peso_kg")
+  pesoKg          Decimal?          @map("peso_kg") @db.Decimal(5, 2)
   alturaCm        Int?              @map("altura_cm")
   estado          EstadoInscripcion @default(PENDIENTE)
-
   urlDniFrente    String            @map("url_dni_frente") @db.VarChar(255)
   urlDniDorso     String            @map("url_dni_dorso") @db.VarChar(255)
   urlFichaMedica  String            @map("url_ficha_medica") @db.VarChar(255)
   urlCud          String?           @map("url_cud") @db.VarChar(255)
-
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
   equipo          Equipo            @relation(fields: [idEquipo], references: [id], onDelete: Cascade)
   prueba          PruebaEspecifica  @relation(fields: [idPrueba], references: [id], onDelete: Cascade)
 
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
-
-  @@unique([dni, idEquipo]) 
+  @@unique([dni, idEquipo])
   @@index([idEquipo])
   @@index([idPrueba])
   @@map("deportistas")
 }
-// Agregar estos modelos a tu prisma/schema.prisma
 
 model Localidad {
-  id        Int           @id @default(autoincrement())
-  nombre    String        @unique @db.VarChar(100) // Ej: "Palpalá" o "Huacalera"
-  tipo      TipoLocalidad
-  
-  // Relaciones relacionales
-  usuarios  Usuario[]
-  tokens    TokenInvitacion[]
+  id       Int               @id @default(autoincrement())
+  nombre   String            @unique @db.VarChar(100)
+  tipo     TipoLocalidad
+  tokens   TokenInvitacion[]
+  usuarios Usuario[]
 
   @@map("localidades")
+}
+
+model TokenInvitacion {
+  id          Int       @id @default(autoincrement())
+  token       String    @unique @db.VarChar(64)
+  idLocalidad Int       @map("id_localidad")
+  utilizado   Boolean   @default(false)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  localidad   Localidad @relation(fields: [idLocalidad], references: [id], onDelete: Cascade)
+
+  @@index([idLocalidad], map: "tokens_invitacion_id_localidad_fkey")
+  @@map("tokens_invitacion")
+}
+
+enum Rol {
+  ADMIN
+  MUNICIPIO
+  EQUIPO
+}
+
+enum TipoDisciplina {
+  CONVENCIONAL
+  ADAPTADO
 }
 
 enum TipoLocalidad {
@@ -152,16 +144,6 @@ enum TipoLocalidad {
   COMISION_MUNICIPAL
 }
 
-model TokenInvitacion {
-  id          Int       @id @default(autoincrement())
-  token       String    @unique @db.VarChar(64) // Token alfanumérico único
-  idLocalidad Int       @map("id_localidad")
-  localidad   Localidad @relation(fields: [idLocalidad], references: [id], onDelete: Cascade)
-  utilizado   Boolean   @default(false)
-  createdAt   DateTime  @default(now()) @map("created_at")
-
-  @@map("tokens_invitacion")
-}
 enum Genero {
   MASCULINO
   FEMENINO

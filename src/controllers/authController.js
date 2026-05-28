@@ -3,54 +3,58 @@ const prisma = require("../config/db");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-// src/controllers/authController.js -> Reemplazar bloque register
+// 🚀 REQUERIDOS: Módulos nativos para interactuar de forma segura con el disco rígido
+const fs = require("fs");
+const path = require("path");
 
+// =========================================================================
+// 1. REGISTRO DE CLUBES/EQUIPOS (CON CONTROL DE DNI Y ANTIFUGAS EN DISCO)
+// =========================================================================
 exports.register = async (req, res) => {
+  let archivosRepresentante = [];
+
   try {
     const {
       username,
       password,
       nombreRepresentante,
       apellido,
-      idLocalidad, // <-- Ahora recibimos el ID numérico relacional
+      idLocalidad,
       dniRepresentante,
-      tokenInvitacion, // <-- Exigimos el token de lista blanca
     } = req.body;
 
+    // 1. Validar que vengan los campos requeridos
     if (
       !username ||
       !password ||
       !nombreRepresentante ||
       !apellido ||
       !idLocalidad ||
-      !dniRepresentante ||
-      !tokenInvitacion
+      !dniRepresentante
     ) {
-      return res.status(400).json({
-        error:
-          "Todos los campos, incluyendo el Token de Lista Blanca, son requeridos.",
-      });
+      if (req.files)
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      return res
+        .status(400)
+        .json({ error: "Todos los campos de texto son obligatorios." });
     }
 
-    // 1. 🛡️ FILTRO DE LISTA BLANCA DE TOKENS
-    const tokenValido = await prisma.tokenInvitacion.findFirst({
-      where: {
-        token: tokenInvitacion.trim(),
-        idLocalidad: parseInt(idLocalidad),
-        utilizado: false,
-      },
-    });
-
-    if (!tokenValido) {
-      return res.status(403).json({
-        error:
-          "El Token de invitación es inválido, ya fue utilizado o no corresponde a la localidad seleccionada.",
+    // 2. Validar que el Front envíe obligatoriamente los DNI cargados
+    if (!req.files || !req.files["dniFrente"] || !req.files["dniDorso"]) {
+      if (req.files)
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      return res.status(400).json({
+        error: "Debe adjuntar el Frente y Dorso del DNI del Representante.",
       });
     }
 
     const usernameFormateado = username.toLowerCase().trim();
 
-    // 2. Control de duplicados tradicionales
+    // 3. Control de duplicación
     const usuarioExistente = await prisma.usuario.findFirst({
       where: {
         OR: [
@@ -61,6 +65,9 @@ exports.register = async (req, res) => {
     });
 
     if (usuarioExistente) {
+      Object.values(req.files)
+        .flat()
+        .forEach((f) => fs.unlinkSync(f.path));
       const causante =
         usuarioExistente.username === usernameFormateado
           ? "El nombre de usuario"
@@ -70,43 +77,54 @@ exports.register = async (req, res) => {
         .json({ error: `${causante} ya se encuentra registrado.` });
     }
 
+    // Mapeamos rutas físicas de almacenamiento
+    const urlDniFrente = `/uploads/documentos/${req.files["dniFrente"][0].filename}`;
+    const urlDniDorso = `/uploads/documentos/${req.files["dniDorso"][0].filename}`;
+    archivosRepresentante = [urlDniFrente, urlDniDorso];
+
     const salt = await bcrypt.genSalt(10);
     const hash = await bcrypt.hash(password, salt);
 
-    // 3. Crear el usuario enlazando la localidad de la BD y quemando el token
-    const nuevoUsuario = await prisma.$transaction(async (tx) => {
-      // Marcamos el token como usado para que nadie más pueda meterse con esa clave
-      await tx.tokenInvitacion.update({
-        where: { id: tokenValido.id },
-        data: { utilizado: true },
-      });
-
-      return await tx.usuario.create({
-        data: {
-          username: usernameFormateado,
-          passwordHash: hash,
-          rol: "EQUIPO",
-          dni: dniRepresentante.trim(),
-          nombre: nombreRepresentante.trim(),
-          apellido: apellido.trim(),
-          idLocalidad: parseInt(idLocalidad),
-        },
-      });
+    // 4. Inserción directa
+    const nuevoUsuario = await prisma.usuario.create({
+      data: {
+        username: usernameFormateado,
+        passwordHash: hash,
+        rol: "EQUIPO",
+        dni: dniRepresentante.trim(),
+        nombre: nombreRepresentante.trim(),
+        apellido: apellido.trim(),
+        idLocalidad: parseInt(idLocalidad, 10),
+        requiereCambioPassword: false, // Entran directo con su clave autogestionada
+        urlDniFrente: urlDniFrente,
+        urlDniDorso: urlDniDorso,
+      },
     });
 
     return res.status(201).json({
       mensaje:
-        "Usuario representante validado por lista blanca e inscripto con éxito.",
+        "Usuario delegado registrado y documentación enlazada correctamente.",
       usuario: { id: nuevoUsuario.id, username: nuevoUsuario.username },
     });
   } catch (error) {
-    console.error("❌ ERROR CRÍTICO EN REGISTRO:", error);
-    return res.status(500).json({
-      error: "Error interno del servidor al procesar la lista blanca.",
+    console.error("❌ ERROR CRÍTICO EN REGISTRO DE REPRESENTANTE:", error);
+
+    // Antifugas de archivos en disco si explota Prisma al insertar
+    archivosRepresentante.forEach((ruta) => {
+      if (ruta) {
+        const rutaAbs = path.join(__dirname, "../../", ruta);
+        if (fs.existsSync(rutaAbs)) fs.unlinkSync(rutaAbs);
+      }
     });
+    return res
+      .status(500)
+      .json({ error: "Error interno al procesar el alta del representante." });
   }
 };
 
+// =========================================================================
+// 2. LOGIN (CON DETECTOR DE PRIMER INICIO DE SESIÓN PARA ADMIN Y MUNICIPIO)
+// =========================================================================
 exports.login = async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -119,7 +137,7 @@ exports.login = async (req, res) => {
 
     const usuario = await prisma.usuario.findUnique({
       where: { username: username.toLowerCase().trim() },
-      include: { localidad: true }, // 👈 Incluimos la relación para sacar el nombre si es necesario
+      include: { localidad: true },
     });
 
     if (!usuario) {
@@ -131,25 +149,30 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: "Credenciales inválidas." });
     }
 
-    // 🚩 IMPORTANTE: Incluir idLocalidad en el JWT para los middlewares
+    // Firmamos el token JWT tradicional
     const token = jwt.sign(
       {
         id: usuario.id,
         rol: usuario.rol,
-        idLocalidad: usuario.idLocalidad, // 👈 Agregado al Token
+        idLocalidad: usuario.idLocalidad,
       },
       process.env.JWT_SECRET || "FORJA_SECRET_KEY_2026",
       { expiresIn: "8h" },
     );
 
+    // 🚀 CONTROL CLAVE: Si es ADMIN o MUNICIPIO y es su primer login, notificamos al Front
+    const debeCambiarClave =
+      (usuario.rol === "ADMIN" || usuario.rol === "MUNICIPIO") &&
+      usuario.requiereCambioPassword;
+
     return res.status(200).json({
       token,
+      debeCambiarClave, // Interceptado por Angular para forzar la redirección
       usuario: {
         id: usuario.id,
         username: usuario.username,
         rol: usuario.rol,
         dni: usuario.dni,
-        // 🚩 CORRECCIÓN DE NOMBRES:
         idLocalidad: usuario.idLocalidad,
         localidadNombre: usuario.localidad?.nombre || "Sin Localidad",
       },
@@ -159,6 +182,44 @@ exports.login = async (req, res) => {
     return res.status(500).json({
       error: "Error en el servidor al autenticar.",
       detalle: error.message,
+    });
+  }
+};
+
+// =========================================================================
+// 3. NUEVO ENDPOINT: PERMITIR ACTUALIZAR LA CONTRASEÑA POR PRIMERA VEZ
+// =========================================================================
+exports.actualizarPasswordPrimerLogin = async (req, res) => {
+  try {
+    const { nuevaPassword } = req.body;
+    const usuarioId = req.usuario.id; // Inyectado desde el token por el middleware de seguridad
+
+    if (!nuevaPassword || nuevaPassword.length < 6) {
+      return res.status(400).json({
+        error: "La nueva contraseña debe tener un mínimo de 6 caracteres.",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const nuevoHash = await bcrypt.hash(nuevaPassword, salt);
+
+    // Actualizamos la clave y liberamos la cuenta
+    await prisma.usuario.update({
+      where: { id: usuarioId },
+      data: {
+        passwordHash: nuevoHash,
+        requiereCambioPassword: false, // El bloqueo se apaga de forma definitiva
+      },
+    });
+
+    return res.status(200).json({
+      mensaje:
+        "Contraseña actualizada de forma exitosa. Su cuenta ha sido activada.",
+    });
+  } catch (error) {
+    console.error("❌ ERROR AL ACTUALIZAR PASSWORD:", error);
+    return res.status(500).json({
+      error: "Error interno al intentar guardar la nueva contraseña.",
     });
   }
 };
