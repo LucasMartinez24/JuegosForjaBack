@@ -158,7 +158,7 @@ const registrarEquipo = async (req, res) => {
 };
 
 // =========================================================================
-// C. Registrar Deportista con Soporte de CUD y Cupos Ilimitados para Atletismo
+// C. Registrar Deportista (Soporte CUD y Cupos Ilimitados para Individuales)
 // =========================================================================
 const registrarJugador = async (req, res) => {
   let archivosSubidos = [];
@@ -221,7 +221,7 @@ const registrarJugador = async (req, res) => {
       }
       return res.status(400).json({
         error:
-          "Inscripción Adenegada. El Certificado Único de Discapacidad (CUD) es obligatorio para disciplinas de Deporte Adaptado.",
+          "Inscripción Denegada. El Certificado Único de Discapacidad (CUD) es obligatorio para disciplinas de Deporte Adaptado.",
       });
     }
 
@@ -283,7 +283,7 @@ const registrarJugador = async (req, res) => {
       );
 
       if (rangoPesoMatch) {
-        postalMinimoPermitido = parseFloat(rangoPesoMatch[1]);
+        pesoMinimoPermitido = parseFloat(rangoPesoMatch[1]);
       } else if (
         pruebaEspecifica.nombrePrueba.toLowerCase().includes("más de")
       ) {
@@ -308,11 +308,28 @@ const registrarJugador = async (req, res) => {
       }
     }
 
-    // 🚀 CONTROL DE CUPOS INTERCEPTADO: Excepción para Atletismo
-    const esDisciplinaAtletismo = equipo.disciplina.nombre
+    // 🚀 FILTRO DE ACCESO DE CUPOS: Abierto e ilimitado para Individuales / Combate
+    const deportesEstrictamenteColectivos = [
+      "BASQUET 3X3",
+      "FUTSAL",
+      "HANDBALL",
+      "HOCKEY SEVEN",
+      "RUGBY 7",
+      "VOLEIBOL",
+      "VOLEIBOL PLAYA",
+      "BASQUET 3X3 ADAPTADO",
+      "GOALBALL",
+      "VOLEIBOL SENTADO",
+    ];
+
+    const nombreDisciplinaActual = equipo.disciplina.nombre
       .toUpperCase()
-      .includes("ATLETISMO");
-    if (!esDisciplinaAtletismo) {
+      .trim();
+    const esDeporteColectivo = deportesEstrictamenteColectivos.includes(
+      nombreDisciplinaActual,
+    );
+
+    if (esDeporteColectivo) {
       const cantidadActual = await prisma.deportista.count({
         where: { idEquipo: equipo.id, idPrueba: pruebaEspecifica.id },
       });
@@ -320,7 +337,7 @@ const registrarJugador = async (req, res) => {
       if (cantidadActual >= pruebaEspecifica.maxJugadores) {
         archivosSubidos.forEach(borrarArchivoFisico);
         return res.status(400).json({
-          error: "Cupo Máximo Alcanzado para la modalidad seleccionada.",
+          error: `Cupo Máximo Alcanzado. La modalidad colectiva "${pruebaEspecifica.nombrePrueba}" solo admite un máximo de ${pruebaEspecifica.maxJugadores} jugadores por delegación.`,
         });
       }
     }
@@ -383,7 +400,7 @@ const registrarJugador = async (req, res) => {
 };
 
 // =========================================================================
-// D. Modificar Datos de un Atleta
+// D. Modificar Datos de un Atleta (Limpieza de Binarios Huérfanos Corregida)
 // =========================================================================
 const editarJugador = async (req, res) => {
   try {
@@ -404,36 +421,38 @@ const editarJugador = async (req, res) => {
       where: { id },
     });
     if (!atletaExistente) {
+      if (req.files) {
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      }
       return res
         .status(404)
         .json({ error: "El atleta especificado no existe." });
     }
 
-    const atletaActualizado = await prisma.deportista.update({
-      where: { id },
-      data: {
-        dni: dni ? dni.trim() : atletaExistente.dni,
-        nombre: nombre ? nombre.trim() : atletaExistente.nombre,
-        apellido: apellido ? apellido.trim() : atletaExistente.apellido,
-        fechaNacimiento: fechaNacimiento
-          ? new Date(fechaNacimiento)
-          : atletaExistente.fechaNacimiento,
-        genero: genero || atletaExistente.genero,
-        pesoKg: peso ? parseFloat(peso) : null,
-        alturaCm: altura ? parseInt(altura) : null,
-        idPrueba: idPrueba1 ? parseInt(idPrueba1) : atletaExistente.idPrueba,
-        idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null,
-      },
-      include: { prueba: true },
-    });
+    // Mapeo selectivo y condicional de la nueva documentación cargada en el Front
+    let nuevosArchivosData = {};
 
-    let nombreSegundaPrueba = null;
-    if (atletaActualizado.idPrueba2) {
-      const p2 = await prisma.pruebaEspecifica.findUnique({
-        where: { id: atletaActualizado.idPrueba2 },
-      });
-      nombreSegundaPrueba = p2 ? p2.nombrePrueba : null;
+    if (req.files) {
+      if (req.files["dniFrente"] && req.files["dniFrente"].length > 0) {
+        nuevosArchivosData.urlDniFrente = `/uploads/documentos/${req.files["dniFrente"][0].filename}`;
+        borrarArchivoFisico(atletaExistente.urlDniFrente);
+      }
+      if (req.files["dniDorso"] && req.files["dniDorso"].length > 0) {
+        nuevosArchivosData.urlDniDorso = `/uploads/documentos/${req.files["dniDorso"][0].filename}`;
+        borrarArchivoFisico(atletaExistente.urlDniDorso);
+      }
+      if (req.files["fichaMedica"] && req.files["fichaMedica"].length > 0) {
+        nuevosArchivosData.urlFichaMedica = `/uploads/documentos/${req.files["fichaMedica"][0].filename}`;
+        borrarArchivoFisico(atletaExistente.urlFichaMedica);
+      }
+      if (req.files["cud"] && req.files["cud"].length > 0) {
+        nuevosArchivosData.urlCud = `/uploads/documentos/${req.files["cud"][0].filename}`;
+        if (atletaExistente.urlCud) borrarArchivoFisico(atletaExistente.urlCud);
+      }
     }
+
     const pruebaIdValidar = idPrueba1
       ? parseInt(idPrueba1)
       : atletaExistente.idPrueba;
@@ -452,11 +471,44 @@ const editarJugador = async (req, res) => {
       if (rangoMatch) pesoMin = parseFloat(rangoMatch[1]);
 
       if (pesoIngresado < pesoMin || (pesoMax && pesoIngresado > pesoMax)) {
+        if (req.files) {
+          Object.values(req.files)
+            .flat()
+            .forEach((f) => fs.unlinkSync(f.path));
+        }
         return res.status(400).json({
           error: `El peso ingresado (${pesoIngresado} kg) no corresponde al rango oficial de la categoría: ${pruebaData.nombrePrueba}.`,
         });
       }
     }
+
+    const atletaActualizado = await prisma.deportista.update({
+      where: { id },
+      data: {
+        dni: dni ? dni.trim() : atletaExistente.dni,
+        nombre: nombre ? nombre.trim() : atletaExistente.nombre,
+        apellido: apellido ? apellido.trim() : atletaExistente.apellido,
+        fechaNacimiento: fechaNacimiento
+          ? new Date(fechaNacimiento)
+          : atletaExistente.fechaNacimiento,
+        genero: genero || atletaExistente.genero,
+        pesoKg: peso ? parseFloat(peso) : null,
+        alturaCm: altura ? parseInt(altura) : null,
+        idPrueba: idPrueba1 ? parseInt(idPrueba1) : atletaExistente.idPrueba,
+        idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null,
+        ...nuevosArchivosData,
+      },
+      include: { prueba: true },
+    });
+
+    let nombreSegundaPrueba = null;
+    if (atletaActualizado.idPrueba2) {
+      const p2 = await prisma.pruebaEspecifica.findUnique({
+        where: { id: atletaActualizado.idPrueba2 },
+      });
+      nombreSegundaPrueba = p2 ? p2.nombrePrueba : null;
+    }
+
     return res.status(200).json({
       mensaje: "Ficha del deportista modificada con éxito.",
       jugador: {
@@ -466,6 +518,11 @@ const editarJugador = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ ERROR EN EDICIÓN DE ATLETA:", error);
+    if (req.files) {
+      Object.values(req.files)
+        .flat()
+        .forEach((f) => fs.unlinkSync(f.path));
+    }
     return res
       .status(500)
       .json({ error: "Error interno al modificar la ficha." });
@@ -478,9 +535,7 @@ const editarJugador = async (req, res) => {
 const eliminarJugador = async (req, res) => {
   try {
     const { id } = req.params;
-
-    // 🚀 CONTROL CLAVE: Chequeamos primero si el ID recibido es de un EQUIPO o de un JUGADOR
-    const esBajaDeEquipoCompleto = id.startsWith("c"); // Los CUID de Prisma para Equipo arrancan con 'c'
+    const esBajaDeEquipoCompleto = id.startsWith("c");
 
     if (esBajaDeEquipoCompleto) {
       const equipo = await prisma.equipo.findUnique({
@@ -494,7 +549,6 @@ const eliminarJugador = async (req, res) => {
           .json({ error: "La delegación que intenta auditar no existe." });
       }
 
-      // 1. Limpiamos todos los archivos físicos de los deportistas asociados
       equipo.deportistas.forEach((atleta) => {
         borrarArchivoFisico(atleta.urlDniFrente);
         borrarArchivoFisico(atleta.urlDniDorso);
@@ -502,16 +556,13 @@ const eliminarJugador = async (req, res) => {
         if (atleta.urlCud) borrarArchivoFisico(atleta.urlCud);
       });
 
-      // 2. Limpiamos los archivos de los DNI del Representante de la cuenta
       if (equipo.usuario) {
         borrarArchivoFisico(equipo.usuario.urlDniFrente);
         borrarArchivoFisico(equipo.usuario.urlDniDorso);
       }
 
-      // 3. Ejecutamos la remoción física de la base de datos (Garantiza integridad)
       await prisma.equipo.delete({ where: { id: id } });
 
-      // 4. Barremos el usuario credencial para liberar el DNI/Username para un re-registro legítimo
       if (equipo.usuarioId) {
         await prisma.usuario.delete({ where: { id: equipo.usuarioId } });
       }
@@ -521,7 +572,6 @@ const eliminarJugador = async (req, res) => {
           "Delegación removida de la liga, credenciales liberadas y espacio en disco purgado con éxito.",
       });
     } else {
-      // Flujo tradicional: Baja individual de un atleta de la grilla
       const atleta = await prisma.deportista.findUnique({ where: { id } });
       if (!atleta) {
         return res
@@ -549,6 +599,9 @@ const eliminarJugador = async (req, res) => {
   }
 };
 
+// =========================================================================
+// FUNCIÓN AUXILIAR: Purgado de Binarios
+// =========================================================================
 const borrarArchivoFisico = (rutaRelativaWeb) => {
   if (!rutaRelativaWeb) return;
   const rutaAbsoluta = path.join(__dirname, "../../", rutaRelativaWeb);
