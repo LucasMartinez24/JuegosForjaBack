@@ -35,7 +35,7 @@ const fileFilter = (req, file, cb) => {
 const uploadConfig = multer({
   storage: storage,
   fileFilter: fileFilter,
-  limits: { fileSize: 4 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 },
 });
 
 // 👇 DEFINIMOS LA PROPIEDAD COMO UNA CONSTANTE LOCAL
