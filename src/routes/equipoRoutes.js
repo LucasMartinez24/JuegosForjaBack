@@ -12,13 +12,22 @@ const { subirDocumentacionAtleta } = require("../middlewares/uploadMiddleware");
 // Rutas mapeadas para el flujo guiado por estados
 router.get("/estado-panel", equipoController.obtenerEstadoPanel);
 router.post("/registrar-equipo", equipoController.registrarEquipo);
+
 // Línea 14 corregida: Ahora los 3 argumentos son funciones reales reconocidas por Express
 router.post(
   "/registrar-jugador",
   subirDocumentacionAtleta,
   equipoController.registrarJugador,
 );
+
 // 👇 NUEVAS RUTAS DE EDICIÓN Y BAJA ASIGNADAS
-router.put("/editar-jugador/:id", equipoController.editarJugador);
+// 🚀 CORREGIDO: Añadimos 'subirDocumentacionAtleta' para que req.body deje de llegar undefined
+router.put(
+  "/editar-jugador/:id",
+  subirDocumentacionAtleta,
+  equipoController.editarJugador,
+);
+
 router.delete("/eliminar-jugador/:id", equipoController.eliminarJugador);
+
 module.exports = router;
