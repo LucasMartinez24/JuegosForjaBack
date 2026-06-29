@@ -431,7 +431,6 @@ const editarJugador = async (req, res) => {
         .json({ error: "El atleta especificado no existe." });
     }
 
-    // Mapeo selectivo y condicional de la nueva documentación cargada en el Front
     let nuevosArchivosData = {};
 
     if (req.files) {
@@ -496,6 +495,10 @@ const editarJugador = async (req, res) => {
         alturaCm: altura ? parseInt(altura) : null,
         idPrueba: idPrueba1 ? parseInt(idPrueba1) : atletaExistente.idPrueba,
         idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null,
+
+        // 🚀 MEJORA: Forzamos la auditoría de nuevo debido a la modificación
+        estado: "PENDIENTE",
+
         ...nuevosArchivosData,
       },
       include: { prueba: true },
@@ -510,7 +513,8 @@ const editarJugador = async (req, res) => {
     }
 
     return res.status(200).json({
-      mensaje: "Ficha del deportista modificada con éxito.",
+      mensaje:
+        "Ficha modificada con éxito. El estado retornó a PENDIENTE para re-auditoría.",
       jugador: {
         ...atletaActualizado,
         nombrePrueba2: nombreSegundaPrueba,
