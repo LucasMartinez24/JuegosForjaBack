@@ -21,21 +21,15 @@ const storage = multer.diskStorage({
   },
 });
 
+// 🔥 DEJAMOS PASAR TODO SIN FILTROS ESTRICTOS
 const fileFilter = (req, file, cb) => {
-  const filetypes = /jpeg|jpg|png|pdf/;
-  const mimetype = filetypes.test(file.mimetype);
-  const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-
-  if (mimetype && extname) {
-    return cb(null, true);
-  }
-  cb(new Error("Formato de archivo no soportado."));
+  cb(null, true); // ✅ Acepta cualquier formato de archivo y mimetype
 };
 
 const uploadConfig = multer({
   storage: storage,
   fileFilter: fileFilter,
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 🚀 Tus 50MB asignados están perfectos acá
 });
 
 // 👇 DEFINIMOS LA PROPIEDAD COMO UNA CONSTANTE LOCAL
