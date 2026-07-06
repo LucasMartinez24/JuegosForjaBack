@@ -72,9 +72,6 @@ app.use((req, res, next) => {
 // 📁 SERVIDOR ESTÁTICO DE ARCHIVOS DE AUDITORÍA Y COMPROBANTES DE DELEGADOS
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
-// Servicios en segundo plano (Mantenimiento periódico)
-require("./services/limpiezaService");
-
 // =========================================================================
 // REGISTRO DE RUTAS INSTITUCIONALES 🛡️
 // =========================================================================
