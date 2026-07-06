@@ -32,11 +32,12 @@ const uploadConfig = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 🚀 Tus 50MB asignados están perfectos acá
 });
 
-// 👇 DEFINIMOS LA PROPIEDAD COMO UNA CONSTANTE LOCAL
+// 👇 CONFIGURACIÓN EXPANDIDA: Añadimos 'cud' para dar soporte a Deporte Adaptado 🚀
 const subirDocumentacionAtleta = uploadConfig.fields([
   { name: "dniFrente", maxCount: 1 },
   { name: "dniDorso", maxCount: 1 },
   { name: "fichaMedica", maxCount: 1 },
+  { name: "cud", maxCount: 1 }, // ✅ Campo agregado para evitar el "Unexpected field"
 ]);
 
 // 🚀 EXPORTACIÓN LIMPIA Y COMPATIBLE DE LA PROPIEDAD
