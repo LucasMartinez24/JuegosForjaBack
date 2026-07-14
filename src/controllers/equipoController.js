@@ -116,7 +116,7 @@ const obtenerEstadoPanel = async (req, res) => {
         deportistas: {
           include: {
             prueba: true,
-            pruebasAdicionales: { include: { prueba: true } },
+            deportistaPruebasAdicionales: { include: { prueba: true } },
           },
           orderBy: { createdAt: "desc" },
         },
@@ -476,7 +476,7 @@ const registrarJugador = async (req, res) => {
       data: deportistaData,
       include: {
         prueba: true,
-        pruebasAdicionales: { include: { prueba: true } },
+        deportistaPruebasAdicionales: { include: { prueba: true } },
       },
     });
 
@@ -668,7 +668,7 @@ const editarJugador = async (req, res) => {
         },
         include: {
           prueba: true,
-          pruebasAdicionales: { include: { prueba: true } },
+          deportistaPruebasAdicionales: { include: { prueba: true } },
         },
       });
     });
