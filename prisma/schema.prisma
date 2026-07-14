@@ -5,26 +5,27 @@ generator client {
 
 datasource db {
   provider = "mysql"
+  url      = env("DATABASE_URL") // Asegurate de tener tu variable de entorno mapeada
 }
 
 model Usuario {
-  id                     Int         @id @default(autoincrement())
-  username               String      @unique @db.VarChar(50)
-  email                  String?     @unique
-  passwordHash           String      @map("password_hash")
+  id                     Int       @id @default(autoincrement())
+  username               String    @unique @db.VarChar(50)
+  email                  String?   @unique
+  passwordHash           String    @map("password_hash")
   rol                    Rol
-  dni                    String      @unique @db.VarChar(20)
-  nombre                 String      @db.VarChar(100)
-  apellido               String      @db.VarChar(100)
-  idLocalidad            Int?        @map("id_localidad")
-  requiereCambioPassword Boolean     @default(true) @map("requiere_cambio_password")
+  dni                    String    @unique @db.VarChar(20)
+  nombre                 String    @db.VarChar(100)
+  apellido               String    @db.VarChar(100)
+  idLocalidad            Int?      @map("id_localidad")
+  requiereCambioPassword Boolean   @default(true) @map("requiere_cambio_password")
   
-  // 🚀 NUEVOS CAMPOS: Documentación del Representante de la Delegación
-  urlDniFrente           String?     @map("url_dni_frente") @db.VarChar(255)
-  urlDniDorso            String?     @map("url_dni_dorso") @db.VarChar(255)
+  // Documentación del Representante de la Delegación
+  urlDniFrente           String?   @map("url_dni_frente") @db.VarChar(255)
+  urlDniDorso            String?   @map("url_dni_dorso") @db.VarChar(255)
   
   equipo                 Equipo?
-  localidad              Localidad?  @relation(fields: [idLocalidad], references: [id])
+  localidad              Localidad? @relation(fields: [idLocalidad], references: [id])
 
   @@index([idLocalidad], map: "usuarios_id_localidad_fkey")
   @@map("usuarios")
@@ -41,19 +42,20 @@ model Disciplina {
 }
 
 model PruebaEspecifica {
-  id                Int          @id @default(autoincrement())
-  idDisciplina      Int          @map("id_disciplina")
-  nombrePrueba      String       @map("nombre_prueba") @db.VarChar(150)
-  genero            Genero
-  anioNacimientoMin Int          @map("anio_nacimiento_min")
-  anioNacimientoMax Int          @map("anio_nacimiento_max")
-  maxJugadores      Int          @map("max_jugadores")
-  requierePeso      Boolean      @default(false) @map("requiere_peso")
-  pesoMaximo        Decimal?     @map("peso_maximo") @db.Decimal(5, 2)
-  pesoMinimo        Decimal?     @map("peso_minimo") @db.Decimal(5, 2)
-  subCategoria      String?      @map("sub_categoria") @db.VarChar(100)
-  deportistas       Deportista[]
-  disciplina        Disciplina   @relation(fields: [idDisciplina], references: [id], onDelete: Cascade)
+  id                  Int                         @id @default(autoincrement())
+  idDisciplina        Int                         @map("id_disciplina")
+  nombrePrueba        String                      @map("nombre_prueba") @db.VarChar(150)
+  genero              Genero
+  anioNacimientoMin   Int                         @map("anio_nacimiento_min")
+  anioNacimientoMax   Int                         @map("anio_nacimiento_max")
+  maxJugadores        Int                         @map("max_jugadores")
+  requierePeso        Boolean                     @default(false) @map("requiere_peso")
+  pesoMaximo          Decimal?                    @map("peso_maximo") @db.Decimal(5, 2)
+  pesoMinimo          Decimal?                    @map("peso_minimo") @db.Decimal(5, 2)
+  subCategoria        String?                     @map("sub_categoria") @db.VarChar(100)
+  deportistas         Deportista[]                @relation("PruebaPrincipal")
+  deportistasComoAdic DeportistaPruebaAdicional[] @relation("PruebaAdicional")
+  disciplina          Disciplina                  @relation(fields: [idDisciplina], references: [id], onDelete: Cascade)
 
   @@index([idDisciplina], map: "pruebas_especificas_id_disciplina_fkey")
   @@map("pruebas_especificas")
@@ -77,28 +79,32 @@ model Equipo {
 }
 
 model Deportista {
-  id              String            @id @default(uuid())
-  idEquipo        String            @map("id_equipo")
-  idPrueba        Int               @map("id_prueba")
-  idPrueba2       Int?              @map("id_prueba_2")
-  dni             String            @db.VarChar(20)
-  nombre          String            @db.VarChar(100)
-  apellido        String            @db.VarChar(100)
-  fechaNacimiento DateTime          @map("fecha_nacimiento")
-  genero          Genero
-  deporteAsignado String            @map("deporte_assigned") @db.VarChar(100)
-  whatsapp        String?           @db.VarChar(30)
-  pesoKg          Decimal?          @map("peso_kg") @db.Decimal(5, 2)
-  alturaCm        Int?              @map("altura_cm")
-  estado          EstadoInscripcion @default(PENDIENTE)
-  urlDniFrente    String            @map("url_dni_frente") @db.VarChar(255)
-  urlDniDorso     String            @map("url_dni_dorso") @db.VarChar(255)
-  urlFichaMedica  String            @map("url_ficha_medica") @db.VarChar(255)
-  urlCud          String?           @map("url_cud") @db.VarChar(255)
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
-  equipo          Equipo            @relation(fields: [idEquipo], references: [id], onDelete: Cascade)
-  prueba          PruebaEspecifica  @relation(fields: [idPrueba], references: [id], onDelete: Cascade)
+  id                 String                      @id @default(uuid())
+  idEquipo           String                      @map("id_equipo")
+  idPrueba           Int                         @map("id_prueba")
+  dni                String                      @db.VarChar(20)
+  nombre             String                      @db.VarChar(100)
+  apellido           String                      @db.VarChar(100)
+  fechaNacimiento    DateTime                    @map("fecha_nacimiento")
+  genero             Genero
+  deporteAsignado    String                      @map("deporte_assigned") @db.VarChar(100)
+  whatsapp           String?                     @db.VarChar(30)
+  pesoKg             Decimal?                    @map("peso_kg") @db.Decimal(5, 2)
+  alturaCm           Int?                        @map("altura_cm")
+  estado             EstadoInscripcion           @default(PENDIENTE)
+  urlDniFrente       String                      @map("url_dni_frente") @db.VarChar(255)
+  urlDniDorso        String                      @map("url_dni_dorso") @db.VarChar(255)
+  urlFichaMedica     String                      @map("url_ficha_medica") @db.VarChar(255)
+  urlCud             String?                     @map("url_cud") @db.VarChar(255)
+  createdAt          DateTime                    @default(now()) @map("created_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
+  
+  // 👁️ OJO: Dejamos el campo viejo acá arriba temporalmente para mapear el script
+  idPrueba2          Int?                        @map("id_prueba_2") 
+
+  equipo             Equipo                      @relation(fields: [idEquipo], references: [id], onDelete: Cascade)
+  prueba             PruebaEspecifica            @relation("PruebaPrincipal", fields: [idPrueba], references: [id], onDelete: Cascade)
+  pruebasAdicionales DeportistaPruebaAdicional[]
 
   @@unique([dni, idEquipo])
   @@index([idEquipo])
@@ -106,11 +112,24 @@ model Deportista {
   @@map("deportistas")
 }
 
+// 🚀 NUEVA TABLA INTERMEDIA PERFECTAMENTE ENLAZADA
+model DeportistaPruebaAdicional {
+  id           Int              @id @default(autoincrement())
+  idDeportista String           @map("id_deportista")
+  idPrueba     Int              @map("id_prueba")
+  deportista   Deportista       @relation(fields: [idDeportista], references: [id], onDelete: Cascade)
+  prueba       PruebaEspecifica @relation("PruebaAdicional", fields: [idPrueba], references: [id], onDelete: Cascade)
+
+  @@unique([idDeportista, idPrueba])
+  @@index([idPrueba])
+  @@map("deportista_pruebas_adicionales")
+}
+
 model Localidad {
-  id       Int               @id @default(autoincrement())
-  nombre   String            @unique @db.VarChar(100)
-  tipo     TipoLocalidad
-  tokens   TokenInvitacion[]
+  id      Int               @id @default(autoincrement())
+  nombre  String            @unique @db.VarChar(100)
+  tipo    TipoLocalidad
+  tokens  TokenInvitacion[]
   usuarios Usuario[]
 
   @@map("localidades")

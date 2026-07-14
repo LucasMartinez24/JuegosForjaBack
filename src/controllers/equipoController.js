@@ -3,7 +3,91 @@ const fs = require("fs");
 const path = require("path");
 
 // =========================================================================
-// A. Sincronizar Estado del Panel (Inyectando Catálogo de Disciplinas Macro)
+// AUX: Determina cuántas pruebas puede elegir un deportista según disciplina
+// =========================================================================
+const NATACION_MULTI = ["NATACION NO FEDERADOS", "NATACION PROMOCIONAL"];
+
+const obtenerMaxPruebas = (nombreDisciplina) => {
+  const nombre = (nombreDisciplina || "").toUpperCase().trim();
+  if (nombre === "ATLETISMO") return 2;
+  if (NATACION_MULTI.includes(nombre)) return 6;
+  return 1;
+};
+
+// =========================================================================
+// AUX: Valida peso/altura con mensajes específicos y accionables
+// =========================================================================
+const validarPesoAltura = (prueba, peso, altura) => {
+  if (!prueba?.requierePeso) return { ok: true };
+
+  if (!peso || peso.toString().trim() === "") {
+    return {
+      ok: false,
+      error: `Falta el peso corporal. Es obligatorio para inscribirse en "${prueba.nombrePrueba}".`,
+    };
+  }
+
+  const pesoIngresado = parseFloat(peso.toString().replace(",", "."));
+  if (isNaN(pesoIngresado) || pesoIngresado <= 0) {
+    return {
+      ok: false,
+      error: `El peso ingresado no es válido. Ingresá un número mayor a 0 (en kg).`,
+    };
+  }
+
+  const pesoMax = prueba.pesoMaximo ? parseFloat(prueba.pesoMaximo) : null;
+  let pesoMin = prueba.pesoMinimo ? parseFloat(prueba.pesoMinimo) : 0;
+
+  // Fallback: si no hay pesoMinimo cargado en la BD, lo inferimos del nombre de la prueba
+  if (!prueba.pesoMinimo) {
+    const rangoMatch = prueba.nombrePrueba.match(
+      /(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)/,
+    );
+    if (rangoMatch) pesoMin = parseFloat(rangoMatch[1]);
+    else {
+      const minimoMatch = prueba.nombrePrueba.match(/más de (\d+(?:\.\d+)?)/i);
+      if (minimoMatch) pesoMin = parseFloat(minimoMatch[1]);
+    }
+  }
+
+  if (pesoIngresado < pesoMin) {
+    return {
+      ok: false,
+      error: `El peso ingresado (${pesoIngresado} kg) es MENOR al mínimo permitido (${pesoMin} kg) para "${prueba.nombrePrueba}". Verificá la categoría de peso correcta.`,
+    };
+  }
+
+  if (pesoMax && pesoIngresado > pesoMax) {
+    return {
+      ok: false,
+      error: `El peso ingresado (${pesoIngresado} kg) SUPERA el máximo permitido (${pesoMax} kg) para "${prueba.nombrePrueba}". Verificá la categoría de peso correcta.`,
+    };
+  }
+
+  if (!altura || altura.toString().trim() === "") {
+    return {
+      ok: false,
+      error: `Falta la altura. Es obligatoria para inscribirse en "${prueba.nombrePrueba}".`,
+    };
+  }
+
+  const alturaIngresada = parseInt(altura, 10);
+  if (
+    isNaN(alturaIngresada) ||
+    alturaIngresada < 100 ||
+    alturaIngresada > 250
+  ) {
+    return {
+      ok: false,
+      error: `La altura ingresada (${altura} cm) no es válida. Ingresá un valor realista entre 100 y 250 cm.`,
+    };
+  }
+
+  return { ok: true, pesoFinal: pesoIngresado, alturaFinal: alturaIngresada };
+};
+
+// =========================================================================
+// 1. Sincronizar Estado del Panel (Inyectando Catálogo de Disciplinas Macro)
 // =========================================================================
 const obtenerEstadoPanel = async (req, res) => {
   try {
@@ -15,13 +99,12 @@ const obtenerEstadoPanel = async (req, res) => {
         .json({ error: "Identificador de usuario ausente." });
     }
 
-    // 1. Traemos todas las pruebas específicas para resolver nombres en el Front
+    // Traemos todas las pruebas específicas para resolver nombres en el Front
     const pruebasGlobales = await prisma.pruebaEspecifica.findMany({
       include: { disciplina: true },
       orderBy: { nombrePrueba: "asc" },
     });
 
-    // Traemos el catálogo de disciplinas generales que el Front necesita renderizar
     const disciplinasGlobales = await prisma.disciplina.findMany({
       orderBy: { nombre: "asc" },
     });
@@ -31,7 +114,10 @@ const obtenerEstadoPanel = async (req, res) => {
       include: {
         disciplina: true,
         deportistas: {
-          include: { prueba: true },
+          include: {
+            prueba: true,
+            pruebasAdicionales: { include: { prueba: true } },
+          },
           orderBy: { createdAt: "desc" },
         },
       },
@@ -39,19 +125,19 @@ const obtenerEstadoPanel = async (req, res) => {
 
     let equipoFormateado = null;
     if (miEquipo) {
+      // Formateamos los jugadores mapeando las pruebas adicionales para compatibilidad con Angular
       const listaJugadoresConPruebas = miEquipo.deportistas.map((jugador) => {
-        let nombreSegundaPrueba = null;
-        if (jugador.idPrueba2) {
-          const pruebaEncontrada = pruebasGlobales.find(
-            (p) => p.id === jugador.idPrueba2,
-          );
-          nombreSegundaPrueba = pruebaEncontrada
-            ? pruebaEncontrada.nombrePrueba
-            : null;
-        }
+        // Obtenemos de forma segura los nombres y IDs de las pruebas adicionales asociadas
+        const adicionales = jugador.pruebasAdicionales || [];
+        const nombreSegundaPrueba =
+          adicionales[0]?.prueba?.nombrePrueba || null;
+        const idPrueba2 = adicionales[0]?.idPrueba || null;
+
         return {
           ...jugador,
+          idPrueba2: idPrueba2, // Compatibilidad retrospectiva con la interfaz
           nombrePrueba2: nombreSegundaPrueba,
+          listaPruebasCompletas: adicionales.map((ad) => ad.prueba), // Todo el catálogo de pruebas para multiselección
         };
       });
 
@@ -75,21 +161,13 @@ const obtenerEstadoPanel = async (req, res) => {
 };
 
 // =========================================================================
-// B. Registrar Instancia/Equipo
+// 2. Registrar Instancia/Equipo
 // =========================================================================
 const registrarEquipo = async (req, res) => {
   try {
     const { nombreEquipo, idDisciplina } = req.body;
-
     const usuarioIdRaw = req.usuario?.id || req.body.usuarioId;
     const usuarioId = parseInt(usuarioIdRaw, 10);
-
-    console.log(
-      "DEBUG: usuarioId recibido:",
-      usuarioIdRaw,
-      " -> convertido:",
-      usuarioId,
-    );
 
     if (isNaN(usuarioId)) {
       return res
@@ -158,7 +236,7 @@ const registrarEquipo = async (req, res) => {
 };
 
 // =========================================================================
-// C. Registrar Deportista (Soporte CUD y Cupos Ilimitados para Individuales)
+// 3. Registrar Deportista (Soporte CUD y Pruebas Adicionales Múltiples)
 // =========================================================================
 const registrarJugador = async (req, res) => {
   let archivosSubidos = [];
@@ -173,14 +251,27 @@ const registrarJugador = async (req, res) => {
       peso,
       altura,
       idPrueba1,
-      idPrueba2,
     } = req.body;
+
+    // Procesamos el JSON string array enviado desde el cliente
+    let pruebasAdicionalesIds = [];
+    if (req.body.pruebasAdicionales) {
+      try {
+        pruebasAdicionalesIds = JSON.parse(req.body.pruebasAdicionales);
+        if (!Array.isArray(pruebasAdicionalesIds)) pruebasAdicionalesIds = [];
+      } catch {
+        pruebasAdicionalesIds = [];
+      }
+    }
+
     const usuarioId = req.usuario?.id || req.body.usuarioId;
 
     if (!dni || !nombre || !apellido || !fechaNacimiento || !genero) {
-      return res.status(400).json({
-        error: "Todos los datos esenciales del atleta son requeridos.",
-      });
+      return res
+        .status(400)
+        .json({
+          error: "Todos los datos esenciales del atleta son requeridos.",
+        });
     }
 
     if (
@@ -189,10 +280,12 @@ const registrarJugador = async (req, res) => {
       !req.files["dniDorso"] ||
       !req.files["fichaMedica"]
     ) {
-      return res.status(400).json({
-        error:
-          "Documentación incompleta. Debe adjuntar los 3 archivos obligatorios.",
-      });
+      return res
+        .status(400)
+        .json({
+          error:
+            "Documentación incompleta. Debe adjuntar los 3 archivos obligatorios.",
+        });
     }
 
     const equipo = await prisma.equipo.findUnique({
@@ -201,24 +294,24 @@ const registrarJugador = async (req, res) => {
     });
 
     if (!equipo) {
-      if (req.files) {
+      if (req.files)
         Object.values(req.files)
           .flat()
           .forEach((f) => fs.unlinkSync(f.path));
-      }
-      return res.status(400).json({
-        error:
-          "Primero debe dar de alta su delegación antes de inscribir atletas.",
-      });
+      return res
+        .status(400)
+        .json({
+          error:
+            "Primero debe dar de alta su delegación antes de inscribir atletas.",
+        });
     }
 
     const esAdaptado = equipo.disciplina.tipo === "ADAPTADO";
     if (esAdaptado && (!req.files["cud"] || req.files["cud"].length === 0)) {
-      if (req.files) {
+      if (req.files)
         Object.values(req.files)
           .flat()
           .forEach((f) => fs.unlinkSync(f.path));
-      }
       return res.status(400).json({
         error:
           "Inscripción Denegada. El Certificado Único de Discapacidad (CUD) es obligatorio para disciplinas de Deporte Adaptado.",
@@ -239,76 +332,88 @@ const registrarJugador = async (req, res) => {
     const pruebaTargetId = idPrueba1 ? parseInt(idPrueba1) : null;
     if (!pruebaTargetId) {
       archivosSubidos.forEach(borrarArchivoFisico);
+      return res
+        .status(400)
+        .json({
+          error:
+            "Debe seleccionar al menos una prueba específica de competencia.",
+        });
+    }
+
+    // LÍMITE DE PRUEBAS SEGÚN DISCIPLINA
+    const maxPruebas = obtenerMaxPruebas(equipo.disciplina.nombre);
+    const idsUnicos = [
+      ...new Set([
+        pruebaTargetId,
+        ...pruebasAdicionalesIds.map((id) => parseInt(id)),
+      ]),
+    ];
+
+    if (idsUnicos.length > maxPruebas) {
+      archivosSubidos.forEach(borrarArchivoFisico);
       return res.status(400).json({
-        error: "Debe seleccionar una prueba específica de competencia.",
+        error: `Superó el límite de pruebas. Para "${equipo.disciplina.nombre}" puede inscribirse en un máximo de ${maxPruebas} prueba(s).`,
       });
     }
 
-    const pruebaEspecifica = await prisma.pruebaEspecifica.findUnique({
-      where: { id: pruebaTargetId },
+    const pruebasSeleccionadas = await prisma.pruebaEspecifica.findMany({
+      where: { id: { in: idsUnicos } },
     });
 
-    if (!pruebaEspecifica) {
+    if (pruebasSeleccionadas.length !== idsUnicos.length) {
       archivosSubidos.forEach(borrarArchivoFisico);
       return res
         .status(404)
-        .json({ error: "La categoría seleccionada no existe." });
+        .json({
+          error: "Una o más de las categorías seleccionadas no existen.",
+        });
     }
 
-    const anioNacimientoAtleta = new Date(fechaNacimiento).getFullYear();
-    if (
-      anioNacimientoAtleta < pruebaEspecifica.anioNacimientoMin ||
-      anioNacimientoAtleta > pruebaEspecifica.anioNacimientoMax
-    ) {
+    // Validación relacional: todas deben pertenecer a la misma disciplina de la delegación
+    const pruebaFueraDeDisciplina = pruebasSeleccionadas.find(
+      (p) => p.idDisciplina !== equipo.idDisciplina,
+    );
+    if (pruebaFueraDeDisciplina) {
       archivosSubidos.forEach(borrarArchivoFisico);
       return res.status(400).json({
-        error: `Edad no permitida. Para la prueba "${pruebaEspecifica.nombrePrueba}", el atleta debe haber nacido entre ${pruebaEspecifica.anioNacimientoMin} y ${pruebaEspecifica.anioNacimientoMax} (Año ingresado: ${anioNacimientoAtleta}).`,
+        error: `La prueba "${pruebaFueraDeDisciplina.nombrePrueba}" no pertenece a la disciplina de su delegación.`,
       });
     }
 
-    if (pruebaEspecifica.requierePeso) {
-      if (!peso || parseFloat(peso) <= 0) {
-        archivosSubidos.forEach(borrarArchivoFisico);
-        return res.status(400).json({
-          error: `El peso corporal es obligatorio para competir en la prueba "${pruebaEspecifica.nombrePrueba}".`,
-        });
-      }
+    const pruebaPrincipal = pruebasSeleccionadas.find(
+      (p) => p.id === pruebaTargetId,
+    );
 
-      const pesoIngresado = parseFloat(peso);
-      const pesoMaximoPermitido = parseFloat(pruebaEspecifica.pesoMaximo);
-      let pesoMinimoPermitido = 0;
-
-      const rangoPesoMatch = pruebaEspecifica.nombrePrueba.match(
-        /(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)/,
-      );
-
-      if (rangoPesoMatch) {
-        pesoMinimoPermitido = parseFloat(rangoPesoMatch[1]);
-      } else if (
-        pruebaEspecifica.nombrePrueba.toLowerCase().includes("más de")
+    // Validación cruzada de edad y sexo contra cada prueba seleccionada
+    const anioNacimientoAtleta = new Date(fechaNacimiento).getFullYear();
+    for (const p of pruebasSeleccionadas) {
+      if (
+        anioNacimientoAtleta < p.anioNacimientoMin ||
+        anioNacimientoAtleta > p.anioNacimientoMax
       ) {
-        const minimoMatch = pruebaEspecifica.nombrePrueba.match(
-          /más de (\d+(?:\.\d+)?)/i,
-        );
-        if (minimoMatch) pesoMinimoPermitido = parseFloat(minimoMatch[1]);
-      }
-
-      if (pesoIngresado < pesoMinimoPermitido) {
         archivosSubidos.forEach(borrarArchivoFisico);
         return res.status(400).json({
-          error: `Peso insuficiente. El peso mínimo para la categoría "${pruebaEspecifica.nombrePrueba}" es de ${pesoMinimoPermitido} kg (Peso ingresado: ${pesoIngresado} kg).`,
+          error: `Edad no permitida para "${p.nombrePrueba}". El atleta debe haber nacido entre ${p.anioNacimientoMin} y ${p.anioNacimientoMax} (nació en ${anioNacimientoAtleta}).`,
         });
       }
-
-      if (pesoMaximoPermitido && pesoIngresado > pesoMaximoPermitido) {
+      if (p.genero !== "MIXTO" && p.genero !== genero) {
         archivosSubidos.forEach(borrarArchivoFisico);
         return res.status(400).json({
-          error: `Exceso de peso. El peso máximo para la categoría "${pruebaEspecifica.nombrePrueba}" es de ${pesoMaximoPermitido} kg (Peso ingresado: ${pesoIngresado} kg).`,
+          error: `La prueba "${p.nombrePrueba}" es exclusiva de la rama ${p.genero}, no coincide con el género del atleta.`,
         });
       }
     }
 
-    // 🚀 FILTRO DE ACCESO DE CUPOS: Abierto e ilimitado para Individuales / Combate
+    // PESO/ALTURA — Solo evaluados contra la prueba principal
+    const validacionPeso = validarPesoAltura(pruebaPrincipal, peso, altura);
+    if (!validacionPeso.ok) {
+      archivosSubidos.forEach(borrarArchivoFisico);
+      return res.status(400).json({ error: validacionPeso.error });
+    }
+    const pesoFinal = validacionPeso.pesoFinal ?? null;
+    const alturaFinal = validacionPeso.alturaFinal ?? null;
+
+    // Control de cupos máximos en caso de deportes colectivos
     const deportesEstrictamenteColectivos = [
       "BASQUET 3X3",
       "FUTSAL",
@@ -321,7 +426,6 @@ const registrarJugador = async (req, res) => {
       "GOALBALL",
       "VOLEIBOL SENTADO",
     ];
-
     const nombreDisciplinaActual = equipo.disciplina.nombre
       .toUpperCase()
       .trim();
@@ -331,13 +435,12 @@ const registrarJugador = async (req, res) => {
 
     if (esDeporteColectivo) {
       const cantidadActual = await prisma.deportista.count({
-        where: { idEquipo: equipo.id, idPrueba: pruebaEspecifica.id },
+        where: { idEquipo: equipo.id, idPrueba: pruebaPrincipal.id },
       });
-
-      if (cantidadActual >= pruebaEspecifica.maxJugadores) {
+      if (cantidadActual >= pruebaPrincipal.maxJugadores) {
         archivosSubidos.forEach(borrarArchivoFisico);
         return res.status(400).json({
-          error: `Cupo Máximo Alcanzado. La modalidad colectiva "${pruebaEspecifica.nombrePrueba}" solo admite un máximo de ${pruebaEspecifica.maxJugadores} jugadores por delegación.`,
+          error: `Cupo Máximo Alcanzado. "${pruebaPrincipal.nombrePrueba}" solo admite ${pruebaPrincipal.maxJugadores} jugadores por delegación.`,
         });
       }
     }
@@ -345,13 +448,16 @@ const registrarJugador = async (req, res) => {
     const atletaDuplicadoEnEquipo = await prisma.deportista.findUnique({
       where: { dni_idEquipo: { dni: dni.trim(), idEquipo: equipo.id } },
     });
-
     if (atletaDuplicadoEnEquipo) {
       archivosSubidos.forEach(borrarArchivoFisico);
-      return res.status(400).json({
-        error: "Este deportista ya se encuentra pre-inscripto en su equipo.",
-      });
+      return res
+        .status(400)
+        .json({
+          error: "Este deportista ya se encuentra pre-inscripto en su equipo.",
+        });
     }
+
+    const idsAdicionales = idsUnicos.filter((id) => id !== pruebaTargetId);
 
     const nuevoDeportista = await prisma.deportista.create({
       data: {
@@ -361,34 +467,28 @@ const registrarJugador = async (req, res) => {
         fechaNacimiento: new Date(fechaNacimiento),
         genero: genero,
         deporteAsignado: equipo.disciplina.nombre,
-        pesoKg: peso ? parseFloat(peso) : null,
-        alturaCm: altura ? parseInt(altura) : null,
+        pesoKg: pesoFinal,
+        alturaCm: alturaFinal,
         estado: "PENDIENTE",
-        urlDniFrente: urlDniFrente,
-        urlDniDorso: urlDniDorso,
-        urlFichaMedica: urlFichaMedica,
-        urlCud: urlCud,
+        urlDniFrente,
+        urlDniDorso,
+        urlFichaMedica,
+        urlCud,
         equipo: { connect: { id: equipo.id } },
-        prueba: { connect: { id: pruebaEspecifica.id } },
-        idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null,
+        prueba: { connect: { id: pruebaPrincipal.id } },
+        pruebasAdicionales: {
+          create: idsAdicionales.map((id) => ({ prueba: { connect: { id } } })),
+        },
       },
-      include: { prueba: true },
+      include: {
+        prueba: true,
+        pruebasAdicionales: { include: { prueba: true } },
+      },
     });
-
-    let nombreSegundaPrueba = null;
-    if (nuevoDeportista.idPrueba2) {
-      const p2 = await prisma.pruebaEspecifica.findUnique({
-        where: { id: nuevoDeportista.idPrueba2 },
-      });
-      nombreSegundaPrueba = p2 ? p2.nombrePrueba : null;
-    }
 
     return res.status(201).json({
       mensaje: "Atleta pre-inscripto con éxito.",
-      jugador: {
-        ...nuevoDeportista,
-        nombrePrueba2: nombreSegundaPrueba,
-      },
+      jugador: nuevoDeportista,
     });
   } catch (error) {
     console.error("❌ ERROR CRÍTICO AL INSERTAR: LIMPIANDO DISCO...", error);
@@ -400,9 +500,10 @@ const registrarJugador = async (req, res) => {
 };
 
 // =========================================================================
-// D. Modificar Datos de un Atleta (Limpieza de Binarios Huérfanos Corregida)
+// 4. Modificar Datos de un Atleta (Edición de Roster y Sincronización)
 // =========================================================================
 const editarJugador = async (req, res) => {
+  let nuevosArchivosParaRemover = [];
   try {
     const { id } = req.params;
     const {
@@ -414,18 +515,28 @@ const editarJugador = async (req, res) => {
       peso,
       altura,
       idPrueba1,
-      idPrueba2,
     } = req.body;
+
+    let pruebasAdicionalesIds = [];
+    if (req.body.pruebasAdicionales) {
+      try {
+        pruebasAdicionalesIds = JSON.parse(req.body.pruebasAdicionales);
+        if (!Array.isArray(pruebasAdicionalesIds)) pruebasAdicionalesIds = [];
+      } catch {
+        pruebasAdicionalesIds = [];
+      }
+    }
 
     const atletaExistente = await prisma.deportista.findUnique({
       where: { id },
+      include: { equipo: { include: { disciplina: true } } },
     });
+
     if (!atletaExistente) {
-      if (req.files) {
+      if (req.files)
         Object.values(req.files)
           .flat()
           .forEach((f) => fs.unlinkSync(f.path));
-      }
       return res
         .status(404)
         .json({ error: "El atleta especificado no existe." });
@@ -436,97 +547,152 @@ const editarJugador = async (req, res) => {
     if (req.files) {
       if (req.files["dniFrente"] && req.files["dniFrente"].length > 0) {
         nuevosArchivosData.urlDniFrente = `/uploads/documentos/${req.files["dniFrente"][0].filename}`;
-        borrarArchivoFisico(atletaExistente.urlDniFrente);
+        nuevosArchivosParaRemover.push(atletaExistente.urlDniFrente);
       }
       if (req.files["dniDorso"] && req.files["dniDorso"].length > 0) {
         nuevosArchivosData.urlDniDorso = `/uploads/documentos/${req.files["dniDorso"][0].filename}`;
-        borrarArchivoFisico(atletaExistente.urlDniDorso);
+        nuevosArchivosParaRemover.push(atletaExistente.urlDniDorso);
       }
       if (req.files["fichaMedica"] && req.files["fichaMedica"].length > 0) {
         nuevosArchivosData.urlFichaMedica = `/uploads/documentos/${req.files["fichaMedica"][0].filename}`;
-        borrarArchivoFisico(atletaExistente.urlFichaMedica);
+        nuevosArchivosParaRemover.push(atletaExistente.urlFichaMedica);
       }
       if (req.files["cud"] && req.files["cud"].length > 0) {
         nuevosArchivosData.urlCud = `/uploads/documentos/${req.files["cud"][0].filename}`;
-        if (atletaExistente.urlCud) borrarArchivoFisico(atletaExistente.urlCud);
+        if (atletaExistente.urlCud)
+          nuevosArchivosParaRemover.push(atletaExistente.urlCud);
       }
     }
 
-    const pruebaIdValidar = idPrueba1
+    const pruebaTargetId = idPrueba1
       ? parseInt(idPrueba1)
       : atletaExistente.idPrueba;
-    const pruebaData = await prisma.pruebaEspecifica.findUnique({
-      where: { id: pruebaIdValidar },
+    const maxPruebas = obtenerMaxPruebas(
+      atletaExistente.equipo.disciplina.nombre,
+    );
+    const idsUnicos = [
+      ...new Set([
+        pruebaTargetId,
+        ...pruebasAdicionalesIds.map((id) => parseInt(id)),
+      ]),
+    ];
+
+    if (idsUnicos.length > maxPruebas) {
+      if (req.files)
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      return res.status(400).json({
+        error: `Superó el límite de pruebas. Para "${atletaExistente.equipo.disciplina.nombre}" puede inscribirse en un máximo de ${maxPruebas} prueba(s).`,
+      });
+    }
+
+    const pruebasSeleccionadas = await prisma.pruebaEspecifica.findMany({
+      where: { id: { in: idsUnicos } },
     });
 
-    if (pruebaData && pruebaData.requierePeso && peso) {
-      const pesoIngresado = parseFloat(peso);
-      const pesoMax = parseFloat(pruebaData.pesoMaximo);
-      let pesoMin = 0;
+    const pruebaPrincipal = pruebasSeleccionadas.find(
+      (p) => p.id === pruebaTargetId,
+    );
 
-      const rangoMatch = pruebaData.nombrePrueba.match(
-        /(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)/,
-      );
-      if (rangoMatch) pesoMin = parseFloat(rangoMatch[1]);
-
-      if (pesoIngresado < pesoMin || (pesoMax && pesoIngresado > pesoMax)) {
-        if (req.files) {
+    // Validación de Edad y Género para cada prueba
+    const anioNacimientoAtleta = new Date(
+      fechaNacimiento || atletaExistente.fechaNacimiento,
+    ).getFullYear();
+    const generoEvaluar = genero || atletaExistente.genero;
+    for (const p of pruebasSeleccionadas) {
+      if (
+        anioNacimientoAtleta < p.anioNacimientoMin ||
+        anioNacimientoAtleta > p.anioNacimientoMax
+      ) {
+        if (req.files)
           Object.values(req.files)
             .flat()
             .forEach((f) => fs.unlinkSync(f.path));
-        }
         return res.status(400).json({
-          error: `El peso ingresado (${pesoIngresado} kg) no corresponde al rango oficial de la categoría: ${pruebaData.nombrePrueba}.`,
+          error: `Edad no permitida para "${p.nombrePrueba}". El atleta debe haber nacido entre ${p.anioNacimientoMin} y ${p.anioNacimientoMax} (nació en ${anioNacimientoAtleta}).`,
+        });
+      }
+      if (p.genero !== "MIXTO" && p.genero !== generoEvaluar) {
+        if (req.files)
+          Object.values(req.files)
+            .flat()
+            .forEach((f) => fs.unlinkSync(f.path));
+        return res.status(400).json({
+          error: `La prueba "${p.nombrePrueba}" es exclusiva de rama ${p.genero}, no coincide con el género del atleta.`,
         });
       }
     }
 
-    const atletaActualizado = await prisma.deportista.update({
-      where: { id },
-      data: {
-        dni: dni ? dni.trim() : atletaExistente.dni,
-        nombre: nombre ? nombre.trim() : atletaExistente.nombre,
-        apellido: apellido ? apellido.trim() : atletaExistente.apellido,
-        fechaNacimiento: fechaNacimiento
-          ? new Date(fechaNacimiento)
-          : atletaExistente.fechaNacimiento,
-        genero: genero || atletaExistente.genero,
-        pesoKg: peso ? parseFloat(peso) : null,
-        alturaCm: altura ? parseInt(altura) : null,
-        idPrueba: idPrueba1 ? parseInt(idPrueba1) : atletaExistente.idPrueba,
-        idPrueba2: idPrueba2 ? parseInt(idPrueba2) : null,
+    // Validación Peso/Altura
+    const validacionPeso = validarPesoAltura(pruebaPrincipal, peso, altura);
+    if (!validacionPeso.ok) {
+      if (req.files)
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      return res.status(400).json({ error: validacionPeso.error });
+    }
+    const pesoFinal = validacionPeso.pesoFinal ?? null;
+    const alturaFinal = validacionPeso.alturaFinal ?? null;
 
-        // 🚀 MEJORA: Forzamos la auditoría de nuevo debido a la modificación
-        estado: "PENDIENTE",
+    const idsAdicionales = idsUnicos.filter((id) => id !== pruebaTargetId);
 
-        ...nuevosArchivosData,
-      },
-      include: { prueba: true },
+    // Ejecutamos transaccionalmente la actualización de datos y la purga/inserción de pruebas adicionales
+    const atletaActualizado = await prisma.$transaction(async (tx) => {
+      // 1. Borramos todas las relaciones viejas
+      await tx.deportistaPruebaAdicional.deleteMany({
+        where: { idDeportista: id },
+      });
+
+      // 2. Creamos las nuevas relaciones
+      if (idsAdicionales.length > 0) {
+        await tx.deportistaPruebaAdicional.createMany({
+          data: idsAdicionales.map((idPrueba) => ({
+            idDeportista: id,
+            idPrueba: idPrueba,
+          })),
+        });
+      }
+
+      // 3. Actualizamos la ficha del deportista
+      return await tx.deportista.update({
+        where: { id },
+        data: {
+          dni: dni ? dni.trim() : atletaExistente.dni,
+          nombre: nombre ? nombre.trim() : atletaExistente.nombre,
+          apellido: apellido ? apellido.trim() : atletaExistente.apellido,
+          fechaNacimiento: fechaNacimiento
+            ? new Date(fechaNacimiento)
+            : atletaExistente.fechaNacimiento,
+          genero: genero || atletaExistente.genero,
+          pesoKg: pesoFinal,
+          alturaCm: alturaFinal,
+          idPrueba: pruebaTargetId,
+          estado: "PENDIENTE", // Toda modificación fuerza retorno a auditoría
+          ...nuevosArchivosData,
+        },
+        include: {
+          prueba: true,
+          pruebasAdicionales: { include: { prueba: true } },
+        },
+      });
     });
 
-    let nombreSegundaPrueba = null;
-    if (atletaActualizado.idPrueba2) {
-      const p2 = await prisma.pruebaEspecifica.findUnique({
-        where: { id: atletaActualizado.idPrueba2 },
-      });
-      nombreSegundaPrueba = p2 ? p2.nombrePrueba : null;
-    }
+    // Remoción física de los viejos binarios reemplazados ahora que la DB impactó exitosamente
+    nuevosArchivosParaRemover.forEach(borrarArchivoFisico);
 
     return res.status(200).json({
       mensaje:
         "Ficha modificada con éxito. El estado retornó a PENDIENTE para re-auditoría.",
-      jugador: {
-        ...atletaActualizado,
-        nombrePrueba2: nombreSegundaPrueba,
-      },
+      jugador: atletaActualizado,
     });
   } catch (error) {
     console.error("❌ ERROR EN EDICIÓN DE ATLETA:", error);
-    if (req.files) {
+    if (req.files)
       Object.values(req.files)
         .flat()
         .forEach((f) => fs.unlinkSync(f.path));
-    }
     return res
       .status(500)
       .json({ error: "Error interno al modificar la ficha." });
@@ -534,7 +700,7 @@ const editarJugador = async (req, res) => {
 };
 
 // =========================================================================
-// E. Dar de Baja Atleta / Eliminar Delegación Falsa por Completo
+// 5. Dar de Baja Atleta / Eliminar Delegación Completa
 // =========================================================================
 const eliminarJugador = async (req, res) => {
   try {
