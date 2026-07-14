@@ -1,18 +1,16 @@
-// src/controllers/adminController.js
 const prisma = require("../config/db");
+const fs = require("fs");
+const path = require("path");
 
 // =========================================================================
 // 1. Obtener Árbol Estructurado de Delegaciones (Disciplina -> Municipios -> Equipos)
 // =========================================================================
-// src/controllers/adminController.js
-
 const obtenerArbolDelegaciones = async (req, res) => {
   try {
     // 1. Traemos todos los equipos navegando de manera anidada hasta su localidad real 📍
     const equipos = await prisma.equipo.findMany({
       include: {
         disciplina: true,
-        // 🚀 SOLUCIÓN: Pasamos por usuario e incluimos su localidad asignada en el registro
         usuario: {
           include: {
             localidad: true,
@@ -20,7 +18,13 @@ const obtenerArbolDelegaciones = async (req, res) => {
         },
         deportistas: {
           include: {
-            prueba: true, // Trae la prueba física si existe
+            prueba: true, // Carga la prueba física principal si existe
+            // 🚀 INCLUSIÓN NATIVA: Mapeamos la tabla asociativa con sus pruebas_especificas
+            deportista_pruebas_adicionales: {
+              include: {
+                pruebas_especificas: true,
+              },
+            },
           },
           orderBy: { apellido: "asc" },
         },
@@ -33,12 +37,10 @@ const obtenerArbolDelegaciones = async (req, res) => {
 
       const nombreDisciplina = equipo.disciplina.nombre.toUpperCase();
 
-      // 🚀 CAPTURA SEGURA: Extraemos el nombre de la localidad navegando por el puente del usuario
       const nombreLocalidadEstetica =
         equipo.usuario?.localidad?.nombre || "Sin Jurisdicción Asignada";
       const nombreLocalidadKey = nombreLocalidadEstetica.toUpperCase();
 
-      // Si la disciplina macro no existe en el acumulador, la creamos
       if (!acc[nombreDisciplina]) {
         acc[nombreDisciplina] = {
           nombreDisciplina: nombreDisciplina,
@@ -48,10 +50,9 @@ const obtenerArbolDelegaciones = async (req, res) => {
         };
       }
 
-      // Si el municipio/comisión no existe dentro de esta disciplina, lo inicializamos
       if (!acc[nombreDisciplina].municipios[nombreLocalidadKey]) {
         acc[nombreDisciplina].municipios[nombreLocalidadKey] = {
-          nombreMunicipio: nombreLocalidadEstetica, // Conserva mayúsculas estéticas (ej: "Abra Pampa")
+          nombreMunicipio: nombreLocalidadEstetica,
           equipos: [],
         };
       }
@@ -60,21 +61,25 @@ const obtenerArbolDelegaciones = async (req, res) => {
         (d) => d.estado === "PENDIENTE",
       ).length;
 
-      // Sumamos métricas a la disciplina macro
       acc[nombreDisciplina].totalAtletas += equipo.deportistas.length;
       acc[nombreDisciplina].totalPendientes += atletasPendientesEquipo;
 
-      // Inyección anti-fallos por si la modalidad viene nula en deportes colectivos
+      // Mapeamos los atletas inyectando las pruebas adicionales formateadas para Angular
       const atletasMapeados = equipo.deportistas.map((atleta) => {
+        const extras = atleta.deportista_pruebas_adicionales || [];
+
         return {
           ...atleta,
           prueba: atleta.prueba
             ? atleta.prueba
             : { nombrePrueba: equipo.disciplina.nombre },
+          // 🚀 Formateamos las pruebas adicionales de manera idéntica al panel de equipos
+          pruebasAdicionales: extras.map((e) => ({
+            prueba: e.pruebas_especificas,
+          })),
         };
       });
 
-      // Insertamos el roster del club en el casillero municipal correspondiente usando la clave limpia
       acc[nombreDisciplina].municipios[nombreLocalidadKey].equipos.push({
         idEquipo: equipo.id,
         nombreEquipo: equipo.nombre,
@@ -113,10 +118,8 @@ const dictaminarAtleta = async (req, res) => {
     const { id } = req.params;
     const { estado } = req.body;
 
-    // 🚀 CAMBIO CRÍTICO: Si tu ID es CUID (string), NO uses parseInt.
-    // Usa el ID tal cual llega de la URL.
     const atletaActualizado = await prisma.deportista.update({
-      where: { id: id }, // ID recibido directo del parámetro
+      where: { id: id },
       data: { estado: estado },
     });
 
@@ -130,13 +133,14 @@ const dictaminarAtleta = async (req, res) => {
       .json({ error: "Error de base de datos", detalle: error.message });
   }
 };
-// src/controllers/adminController.js -> Agregar al final
 
+// =========================================================================
+// 3. Eliminar Delegación desde Auditoría (Purga Completa)
+// =========================================================================
 const eliminarEquipoPorAuditoria = async (req, res) => {
   try {
     const { idEquipo } = req.params;
 
-    // 1. Buscamos el equipo junto con todos sus deportistas antes de borrar
     const equipo = await prisma.equipo.findUnique({
       where: { id: idEquipo },
       include: { deportistas: true },
@@ -148,7 +152,7 @@ const eliminarEquipoPorAuditoria = async (req, res) => {
         .json({ error: "La delegación que intenta eliminar no existe." });
     }
 
-    // 2. 🧹 LIMPIEZA DE DISCO FISCO: Iteramos y borramos los archivos de todos sus atletas
+    // 🧹 LIMPIEZA DE DISCO FÍSICO: Iteramos y borramos los archivos de todos sus atletas
     equipo.deportistas.forEach((atleta) => {
       borrarArchivoFisico(atleta.urlDniFrente);
       borrarArchivoFisico(atleta.urlDniDorso);
@@ -156,7 +160,7 @@ const eliminarEquipoPorAuditoria = async (req, res) => {
       if (atleta.urlCud) borrarArchivoFisico(atleta.urlCud);
     });
 
-    // 3. Borramos el equipo (Prisma elimina los deportistas en cascada automáticamente)
+    // Borramos el equipo (Prisma elimina los deportistas y relaciones en cascada automáticamente)
     await prisma.equipo.delete({
       where: { id: idEquipo },
     });
@@ -172,8 +176,9 @@ const eliminarEquipoPorAuditoria = async (req, res) => {
     });
   }
 };
+
 // =========================================================================
-// 3. Listar Municipios con sus Estadísticas de Cuentas y Tokens
+// 4. Listar Municipios con sus Estadísticas de Cuentas y Tokens
 // =========================================================================
 const obtenerLocalidadesYTokens = async (req, res) => {
   try {
@@ -205,7 +210,7 @@ const obtenerLocalidadesYTokens = async (req, res) => {
 };
 
 // =========================================================================
-// 4. Crear Cuenta Oficial de Rol MUNICIPIO (Lista Blanca Central)
+// 5. Crear Cuenta Oficial de Rol MUNICIPIO (Lista Blanca Central)
 // =========================================================================
 const crearUsuarioMunicipio = async (req, res) => {
   try {
@@ -233,7 +238,6 @@ const crearUsuarioMunicipio = async (req, res) => {
 
     const localidadId = parseInt(idLocalidad);
 
-    // Validar si la localidad ya posee un usuario asignado
     const cuentaExistente = await prisma.usuario.findFirst({
       where: { idLocalidad: localidadId, rol: "MUNICIPIO" },
     });
@@ -243,7 +247,6 @@ const crearUsuarioMunicipio = async (req, res) => {
       });
     }
 
-    // Validar duplicado de username general
     const usernameExistente = await prisma.usuario.findUnique({
       where: { username: username.toLowerCase().trim() },
     });
@@ -261,7 +264,7 @@ const crearUsuarioMunicipio = async (req, res) => {
       data: {
         username: username.toLowerCase().trim(),
         passwordHash: hash,
-        rol: "MUNICIPIO", // <-- ROL CONFIGURADO NATIVAMENTE
+        rol: "MUNICIPIO",
         dni: dni.trim(),
         nombre: nombreResponsante.trim(),
         apellido: apellidoResponsante.trim(),
@@ -285,13 +288,11 @@ const crearUsuarioMunicipio = async (req, res) => {
 };
 
 // =========================================================================
-// 5. Generar Token Alfanumérico Único de Lista Blanca
+// 6. Generar Token Alfanumérico Único de Lista Blanca
 // =========================================================================
 const generarTokenMunicipio = async (req, res) => {
   try {
     const { idLocalidad } = req.body;
-
-    // 1. Forzar parsing numérico estricto
     const localidadId = parseInt(idLocalidad, 10);
 
     if (!localidadId || isNaN(localidadId)) {
@@ -301,7 +302,6 @@ const generarTokenMunicipio = async (req, res) => {
       });
     }
 
-    // 2. Controlar físicamente la existencia de la localidad en MariaDB
     const localidadExiste = await prisma.localidad.findUnique({
       where: { id: localidadId },
     });
@@ -312,11 +312,10 @@ const generarTokenMunicipio = async (req, res) => {
       });
     }
 
-    // 3. Generador de Token Premium: FORJA-XXXX-XXXX
     const caracterPermitido = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const segmentador = (largo) =>
       Array.from(
-        { length: largo }, // <-- CORREGIDO: Usar 'length' nativo en lugar de objeto 'largo'
+        { length: largo },
         () =>
           caracterPermitido[
             Math.floor(Math.random() * caracterPermitido.length)
@@ -325,7 +324,6 @@ const generarTokenMunicipio = async (req, res) => {
 
     const tokenGenerado = `FORJA-${segmentador(4)}-${segmentador(4)}`;
 
-    // 4. Inserción transaccional limpia
     const nuevoToken = await prisma.tokenInvitacion.create({
       data: {
         token: tokenGenerado,
@@ -339,7 +337,6 @@ const generarTokenMunicipio = async (req, res) => {
       token: nuevoToken,
     });
   } catch (error) {
-    // 🚀 LOG DETALLADO EXPLICITO: Esto va a obligar a tu terminal a cantar el error exacto
     console.log(
       "\n🚨 ==================== ERROR CRÍTICO PRISMA ====================",
     );
@@ -354,11 +351,14 @@ const generarTokenMunicipio = async (req, res) => {
     });
   }
 };
+
+// =========================================================================
+// 7. Obtener Datos del Delegado/Representante por Equipo
+// =========================================================================
 const obtenerDelegadoPorEquipo = async (req, res) => {
   try {
     const { idEquipo } = req.params;
 
-    // Buscamos el equipo pero incluyendo los campos exactos del usuario responsable
     const equipo = await prisma.equipo.findUnique({
       where: { id: idEquipo },
       select: {
@@ -380,7 +380,6 @@ const obtenerDelegadoPorEquipo = async (req, res) => {
       });
     }
 
-    // Retornamos el formato exacto que tu HTML está esperando leer (usuarioResponsable)
     return res.status(200).json({
       usuarioResponsable: equipo.usuario,
     });
@@ -391,12 +390,12 @@ const obtenerDelegadoPorEquipo = async (req, res) => {
     });
   }
 };
+
+// =========================================================================
+// FUNCIÓN AUXILIAR: Purgado de Binarios
+// =========================================================================
 const borrarArchivoFisico = (rutaRelativaWeb) => {
   if (!rutaRelativaWeb) return;
-
-  // Requerimos path y fs de forma segura si no los tenías arriba
-  const fs = require("fs");
-  const path = require("path");
 
   const rutaAbsoluta = path.join(__dirname, "../../", rutaRelativaWeb);
 
@@ -413,13 +412,13 @@ const borrarArchivoFisico = (rutaRelativaWeb) => {
     });
   }
 };
-// No olvides exportarlos al final de tu archivo:
+
 module.exports = {
   obtenerArbolDelegaciones,
   dictaminarAtleta,
   eliminarEquipoPorAuditoria,
-  obtenerLocalidadesYTokens, // <-- Agregar
-  crearUsuarioMunicipio, // <-- Agregar
+  obtenerLocalidadesYTokens,
+  crearUsuarioMunicipio,
   generarTokenMunicipio,
-  obtenerDelegadoPorEquipo, // <-- Agregar
+  obtenerDelegadoPorEquipo,
 };
