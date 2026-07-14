@@ -116,7 +116,7 @@ const obtenerEstadoPanel = async (req, res) => {
         deportistas: {
           include: {
             prueba: true,
-            deportistaPruebasAdicionales: { include: { prueba: true } },
+            deportista_pruebas_adicionales: { include: { prueba: true } },
           },
           orderBy: { createdAt: "desc" },
         },
@@ -127,7 +127,7 @@ const obtenerEstadoPanel = async (req, res) => {
     if (miEquipo) {
       // Formateamos los jugadores mapeando las pruebas adicionales para compatibilidad con Angular
       const listaJugadoresConPruebas = miEquipo.deportistas.map((jugador) => {
-        const adicionales = jugador.pruebasAdicionales || [];
+        const adicionales = jugador.deportista_pruebas_adicionales || [];
         const nombreSegundaPrueba =
           adicionales[0]?.prueba?.nombrePrueba || null;
         const idPrueba2 = adicionales[0]?.idPrueba || null;
@@ -467,7 +467,7 @@ const registrarJugador = async (req, res) => {
 
     // Solo creamos la relación asociativa en la intermedia si realmente se seleccionaron pruebas extras
     if (idsAdicionales.length > 0) {
-      deportistaData.pruebasAdicionales = {
+      deportistaData.deportista_pruebas_adicionales = {
         create: idsAdicionales.map((id) => ({ prueba: { connect: { id } } })),
       };
     }
@@ -476,7 +476,7 @@ const registrarJugador = async (req, res) => {
       data: deportistaData,
       include: {
         prueba: true,
-        deportistaPruebasAdicionales: { include: { prueba: true } },
+        deportista_pruebas_adicionales: { include: { prueba: true } },
       },
     });
 
@@ -668,7 +668,7 @@ const editarJugador = async (req, res) => {
         },
         include: {
           prueba: true,
-          deportistaPruebasAdicionales: { include: { prueba: true } },
+          deportista_pruebas_adicionales: { include: { prueba: true } },
         },
       });
     });
