@@ -53,7 +53,7 @@ const validarPesoAltura = (prueba, peso, altura) => {
   if (pesoIngresado < pesoMin) {
     return {
       ok: false,
-      error: `El peso ingresado (${pesoIngresado} kg) es MENOR al mínimo permitido (${pesoMin} kg) para "${prueba.nombrePrueba}". Verificá la categoría de peso correcta.`,
+      error: `El peso ingresado (${pesoIngresado} kg) is MENOR al mínimo permitido (${pesoMin} kg) para "${prueba.nombrePrueba}". Verificá la categoría de peso correcta.`,
     };
   }
 
@@ -127,7 +127,6 @@ const obtenerEstadoPanel = async (req, res) => {
     if (miEquipo) {
       // Formateamos los jugadores mapeando las pruebas adicionales para compatibilidad con Angular
       const listaJugadoresConPruebas = miEquipo.deportistas.map((jugador) => {
-        // Obtenemos de forma segura los nombres y IDs de las pruebas adicionales asociadas
         const adicionales = jugador.pruebasAdicionales || [];
         const nombreSegundaPrueba =
           adicionales[0]?.prueba?.nombrePrueba || null;
@@ -267,11 +266,9 @@ const registrarJugador = async (req, res) => {
     const usuarioId = req.usuario?.id || req.body.usuarioId;
 
     if (!dni || !nombre || !apellido || !fechaNacimiento || !genero) {
-      return res
-        .status(400)
-        .json({
-          error: "Todos los datos esenciales del atleta son requeridos.",
-        });
+      return res.status(400).json({
+        error: "Todos los datos esenciales del atleta son requeridos.",
+      });
     }
 
     if (
@@ -280,12 +277,10 @@ const registrarJugador = async (req, res) => {
       !req.files["dniDorso"] ||
       !req.files["fichaMedica"]
     ) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "Documentación incompleta. Debe adjuntar los 3 archivos obligatorios.",
-        });
+      return res.status(400).json({
+        error:
+          "Documentación incompleta. Debe adjuntar los 3 archivos obligatorios.",
+      });
     }
 
     const equipo = await prisma.equipo.findUnique({
@@ -298,12 +293,10 @@ const registrarJugador = async (req, res) => {
         Object.values(req.files)
           .flat()
           .forEach((f) => fs.unlinkSync(f.path));
-      return res
-        .status(400)
-        .json({
-          error:
-            "Primero debe dar de alta su delegación antes de inscribir atletas.",
-        });
+      return res.status(400).json({
+        error:
+          "Primero debe dar de alta su delegación antes de inscribir atletas.",
+      });
     }
 
     const esAdaptado = equipo.disciplina.tipo === "ADAPTADO";
@@ -332,12 +325,10 @@ const registrarJugador = async (req, res) => {
     const pruebaTargetId = idPrueba1 ? parseInt(idPrueba1) : null;
     if (!pruebaTargetId) {
       archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(400)
-        .json({
-          error:
-            "Debe seleccionar al menos una prueba específica de competencia.",
-        });
+      return res.status(400).json({
+        error:
+          "Debe seleccionar al menos una prueba específica de competencia.",
+      });
     }
 
     // LÍMITE DE PRUEBAS SEGÚN DISCIPLINA
@@ -362,11 +353,9 @@ const registrarJugador = async (req, res) => {
 
     if (pruebasSeleccionadas.length !== idsUnicos.length) {
       archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(404)
-        .json({
-          error: "Una o más de las categorías seleccionadas no existen.",
-        });
+      return res.status(404).json({
+        error: "Una o más de las categorías seleccionadas no existen.",
+      });
     }
 
     // Validación relacional: todas deben pertenecer a la misma disciplina de la delegación
@@ -450,36 +439,41 @@ const registrarJugador = async (req, res) => {
     });
     if (atletaDuplicadoEnEquipo) {
       archivosSubidos.forEach(borrarArchivoFisico);
-      return res
-        .status(400)
-        .json({
-          error: "Este deportista ya se encuentra pre-inscripto en su equipo.",
-        });
+      return res.status(400).json({
+        error: "Este deportista ya se encuentra pre-inscripto en su equipo.",
+      });
     }
 
     const idsAdicionales = idsUnicos.filter((id) => id !== pruebaTargetId);
 
+    // 🚀 Construcción condicional de datos para evitar consultas vacías a MariaDB
+    const deportistaData = {
+      dni: dni.trim(),
+      nombre: nombre.trim(),
+      apellido: apellido.trim(),
+      fechaNacimiento: new Date(fechaNacimiento),
+      genero: genero,
+      deporteAsignado: equipo.disciplina.nombre,
+      pesoKg: pesoFinal,
+      alturaCm: alturaFinal,
+      estado: "PENDIENTE",
+      urlDniFrente,
+      urlDniDorso,
+      urlFichaMedica,
+      urlCud,
+      equipo: { connect: { id: equipo.id } },
+      prueba: { connect: { id: pruebaPrincipal.id } },
+    };
+
+    // Solo creamos la relación asociativa en la intermedia si realmente se seleccionaron pruebas extras
+    if (idsAdicionales.length > 0) {
+      deportistaData.pruebasAdicionales = {
+        create: idsAdicionales.map((id) => ({ prueba: { connect: { id } } })),
+      };
+    }
+
     const nuevoDeportista = await prisma.deportista.create({
-      data: {
-        dni: dni.trim(),
-        nombre: nombre.trim(),
-        apellido: apellido.trim(),
-        fechaNacimiento: new Date(fechaNacimiento),
-        genero: genero,
-        deporteAsignado: equipo.disciplina.nombre,
-        pesoKg: pesoFinal,
-        alturaCm: alturaFinal,
-        estado: "PENDIENTE",
-        urlDniFrente,
-        urlDniDorso,
-        urlFichaMedica,
-        urlCud,
-        equipo: { connect: { id: equipo.id } },
-        prueba: { connect: { id: pruebaPrincipal.id } },
-        pruebasAdicionales: {
-          create: idsAdicionales.map((id) => ({ prueba: { connect: { id } } })),
-        },
-      },
+      data: deportistaData,
       include: {
         prueba: true,
         pruebasAdicionales: { include: { prueba: true } },
@@ -645,7 +639,7 @@ const editarJugador = async (req, res) => {
         where: { idDeportista: id },
       });
 
-      // 2. Creamos las nuevas relaciones
+      // 2. Creamos las nuevas relaciones (Solo si se seleccionaron de verdad)
       if (idsAdicionales.length > 0) {
         await tx.deportistaPruebaAdicional.createMany({
           data: idsAdicionales.map((idPrueba) => ({
