@@ -38,7 +38,6 @@ const validarPesoAltura = (prueba, peso, altura) => {
   const pesoMax = prueba.pesoMaximo ? parseFloat(prueba.pesoMaximo) : null;
   let pesoMin = prueba.pesoMinimo ? parseFloat(prueba.pesoMinimo) : 0;
 
-  // Fallback: si no hay pesoMinimo cargado en la BD, lo inferimos del nombre de la prueba
   if (!prueba.pesoMinimo) {
     const rangoMatch = prueba.nombrePrueba.match(
       /(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)/,
@@ -99,7 +98,6 @@ const obtenerEstadoPanel = async (req, res) => {
         .json({ error: "Identificador de usuario ausente." });
     }
 
-    // Traemos todas las pruebas específicas para resolver nombres en el Front
     const pruebasGlobales = await prisma.pruebaEspecifica.findMany({
       include: { disciplina: true },
       orderBy: { nombrePrueba: "asc" },
@@ -116,7 +114,6 @@ const obtenerEstadoPanel = async (req, res) => {
         deportistas: {
           include: {
             prueba: true,
-            // 🚀 Usamos el nombre exacto de la relación autogenerado por Prisma
             deportista_pruebas_adicionales: {
               include: {
                 pruebas_especificas: true,
@@ -130,7 +127,6 @@ const obtenerEstadoPanel = async (req, res) => {
 
     let equipoFormateado = null;
     if (miEquipo) {
-      // Formateamos los jugadores mapeando las pruebas adicionales para compatibilidad con Angular
       const listaJugadoresConPruebas = miEquipo.deportistas.map((jugador) => {
         const adicionales = jugador.deportista_pruebas_adicionales || [];
         const nombreSegundaPrueba =
@@ -140,16 +136,15 @@ const obtenerEstadoPanel = async (req, res) => {
 
         return {
           ...jugador,
-          idPrueba2: idPrueba2, // Compatibilidad retrospectiva con la interfaz
+          idPrueba2: idPrueba2,
           nombrePrueba2: nombreSegundaPrueba,
-          // Mapeamos para que Angular reciba la estructura "pruebasAdicionales" limpia tal como la espera
           pruebasAdicionales: adicionales.map((ad) => ({
             idPrueba: ad.idPrueba || ad.id_prueba,
             prueba: ad.pruebas_especificas,
           })),
           listaPruebasCompletas: adicionales.map(
             (ad) => ad.pruebas_especificas,
-          ), // Todo el catálogo de pruebas para multiselección
+          ),
         };
       });
 
@@ -265,7 +260,6 @@ const registrarJugador = async (req, res) => {
       idPrueba1,
     } = req.body;
 
-    // Procesamos el JSON string array enviado desde el cliente
     let pruebasAdicionalesIds = [];
     if (req.body.pruebasAdicionales) {
       try {
@@ -344,7 +338,6 @@ const registrarJugador = async (req, res) => {
       });
     }
 
-    // LÍMITE DE PRUEBAS SEGÚN DISCIPLINA
     const maxPruebas = obtenerMaxPruebas(equipo.disciplina.nombre);
     const idsUnicos = [
       ...new Set([
@@ -371,7 +364,6 @@ const registrarJugador = async (req, res) => {
       });
     }
 
-    // Validación relacional: todas deben pertenecer a la misma disciplina de la delegación
     const pruebaFueraDeDisciplina = pruebasSeleccionadas.find(
       (p) => p.idDisciplina !== equipo.idDisciplina,
     );
@@ -386,7 +378,6 @@ const registrarJugador = async (req, res) => {
       (p) => p.id === pruebaTargetId,
     );
 
-    // Validación cruzada de edad y sexo contra cada prueba seleccionada
     const anioNacimientoAtleta = new Date(fechaNacimiento).getFullYear();
     for (const p of pruebasSeleccionadas) {
       if (
@@ -406,7 +397,6 @@ const registrarJugador = async (req, res) => {
       }
     }
 
-    // PESO/ALTURA — Solo evaluados contra la prueba principal
     const validacionPeso = validarPesoAltura(pruebaPrincipal, peso, altura);
     if (!validacionPeso.ok) {
       archivosSubidos.forEach(borrarArchivoFisico);
@@ -415,7 +405,6 @@ const registrarJugador = async (req, res) => {
     const pesoFinal = validacionPeso.pesoFinal ?? null;
     const alturaFinal = validacionPeso.alturaFinal ?? null;
 
-    // Control de cupos máximos en caso de deportes colectivos
     const deportesEstrictamenteColectivos = [
       "BASQUET 3X3",
       "FUTSAL",
@@ -459,7 +448,6 @@ const registrarJugador = async (req, res) => {
 
     const idsAdicionales = idsUnicos.filter((id) => id !== pruebaTargetId);
 
-    // 🚀 Construcción condicional de datos para evitar consultas vacías a MariaDB
     const deportistaData = {
       dni: dni.trim(),
       nombre: nombre.trim(),
@@ -478,7 +466,6 @@ const registrarJugador = async (req, res) => {
       prueba: { connect: { id: pruebaPrincipal.id } },
     };
 
-    // Solo creamos la relación asociativa en la intermedia si realmente se seleccionaron pruebas extras
     if (idsAdicionales.length > 0) {
       deportistaData.deportista_pruebas_adicionales = {
         create: idsAdicionales.map((id) => ({
@@ -606,7 +593,6 @@ const editarJugador = async (req, res) => {
       (p) => p.id === pruebaTargetId,
     );
 
-    // Validación de Edad y Género para cada prueba
     const anioNacimientoAtleta = new Date(
       fechaNacimiento || atletaExistente.fechaNacimiento,
     ).getFullYear();
@@ -635,7 +621,6 @@ const editarJugador = async (req, res) => {
       }
     }
 
-    // Validación Peso/Altura
     const validacionPeso = validarPesoAltura(pruebaPrincipal, peso, altura);
     if (!validacionPeso.ok) {
       if (req.files)
@@ -649,24 +634,22 @@ const editarJugador = async (req, res) => {
 
     const idsAdicionales = idsUnicos.filter((id) => id !== pruebaTargetId);
 
-    // Ejecutamos transaccionalmente la actualización de datos y la purga/inserción de pruebas adicionales
     const atletaActualizado = await prisma.$transaction(async (tx) => {
-      // 1. Borramos todas las relaciones viejas usando el nombre del modelo de la intermedia de forma nativa
+      // 🚀 CORREGIDO: Usamos el argumento exacto del modelo nativo: id_deportista
       await tx.deportista_pruebas_adicionales.deleteMany({
-        where: { idDeportista: id },
+        where: { id_deportista: id },
       });
 
-      // 2. Creamos las nuevas relaciones (Solo si se seleccionaron de verdad)
+      // 🚀 CORREGIDO: Usamos id_deportista e id_prueba en el createMany relacional nativo
       if (idsAdicionales.length > 0) {
         await tx.deportista_pruebas_adicionales.createMany({
           data: idsAdicionales.map((idPrueba) => ({
-            idDeportista: id,
-            idPrueba: idPrueba,
+            id_deportista: id,
+            id_prueba: idPrueba,
           })),
         });
       }
 
-      // 3. Actualizamos la ficha del deportista
       return await tx.deportista.update({
         where: { id },
         data: {
@@ -692,7 +675,6 @@ const editarJugador = async (req, res) => {
       });
     });
 
-    // Remoción física de los viejos binarios reemplazados ahora que la DB impactó exitosamente
     nuevosArchivosParaRemover.forEach(borrarArchivoFisico);
 
     return res.status(200).json({
