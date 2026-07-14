@@ -53,7 +53,7 @@ const validarPesoAltura = (prueba, peso, altura) => {
   if (pesoIngresado < pesoMin) {
     return {
       ok: false,
-      error: `El peso ingresado (${pesoIngresado} kg) is MENOR al mínimo permitido (${pesoMin} kg) para "${prueba.nombrePrueba}". Verificá la categoría de peso correcta.`,
+      error: `El peso ingresado (${pesoIngresado} kg) es MENOR al mínimo permitido (${pesoMin} kg) para "${prueba.nombrePrueba}". Verificá la categoría de peso correcta.`,
     };
   }
 
@@ -116,7 +116,12 @@ const obtenerEstadoPanel = async (req, res) => {
         deportistas: {
           include: {
             prueba: true,
-            deportista_pruebas_adicionales: { include: { prueba: true } },
+            // 🚀 Usamos el nombre exacto de la relación autogenerado por Prisma
+            deportista_pruebas_adicionales: {
+              include: {
+                pruebas_especificas: true,
+              },
+            },
           },
           orderBy: { createdAt: "desc" },
         },
@@ -129,14 +134,22 @@ const obtenerEstadoPanel = async (req, res) => {
       const listaJugadoresConPruebas = miEquipo.deportistas.map((jugador) => {
         const adicionales = jugador.deportista_pruebas_adicionales || [];
         const nombreSegundaPrueba =
-          adicionales[0]?.prueba?.nombrePrueba || null;
-        const idPrueba2 = adicionales[0]?.idPrueba || null;
+          adicionales[0]?.pruebas_especificas?.nombrePrueba || null;
+        const idPrueba2 =
+          adicionales[0]?.idPrueba || adicionales[0]?.id_prueba || null;
 
         return {
           ...jugador,
           idPrueba2: idPrueba2, // Compatibilidad retrospectiva con la interfaz
           nombrePrueba2: nombreSegundaPrueba,
-          listaPruebasCompletas: adicionales.map((ad) => ad.prueba), // Todo el catálogo de pruebas para multiselección
+          // Mapeamos para que Angular reciba la estructura "pruebasAdicionales" limpia tal como la espera
+          pruebasAdicionales: adicionales.map((ad) => ({
+            idPrueba: ad.idPrueba || ad.id_prueba,
+            prueba: ad.pruebas_especificas,
+          })),
+          listaPruebasCompletas: adicionales.map(
+            (ad) => ad.pruebas_especificas,
+          ), // Todo el catálogo de pruebas para multiselección
         };
       });
 
@@ -468,7 +481,9 @@ const registrarJugador = async (req, res) => {
     // Solo creamos la relación asociativa en la intermedia si realmente se seleccionaron pruebas extras
     if (idsAdicionales.length > 0) {
       deportistaData.deportista_pruebas_adicionales = {
-        create: idsAdicionales.map((id) => ({ prueba: { connect: { id } } })),
+        create: idsAdicionales.map((id) => ({
+          pruebas_especificas: { connect: { id } },
+        })),
       };
     }
 
@@ -476,7 +491,9 @@ const registrarJugador = async (req, res) => {
       data: deportistaData,
       include: {
         prueba: true,
-        deportista_pruebas_adicionales: { include: { prueba: true } },
+        deportista_pruebas_adicionales: {
+          include: { pruebas_especificas: true },
+        },
       },
     });
 
@@ -634,14 +651,14 @@ const editarJugador = async (req, res) => {
 
     // Ejecutamos transaccionalmente la actualización de datos y la purga/inserción de pruebas adicionales
     const atletaActualizado = await prisma.$transaction(async (tx) => {
-      // 1. Borramos todas las relaciones viejas
-      await tx.deportistaPruebaAdicional.deleteMany({
+      // 1. Borramos todas las relaciones viejas usando el nombre del modelo de la intermedia de forma nativa
+      await tx.deportista_pruebas_adicionales.deleteMany({
         where: { idDeportista: id },
       });
 
       // 2. Creamos las nuevas relaciones (Solo si se seleccionaron de verdad)
       if (idsAdicionales.length > 0) {
-        await tx.deportistaPruebaAdicional.createMany({
+        await tx.deportista_pruebas_adicionales.createMany({
           data: idsAdicionales.map((idPrueba) => ({
             idDeportista: id,
             idPrueba: idPrueba,
@@ -663,12 +680,14 @@ const editarJugador = async (req, res) => {
           pesoKg: pesoFinal,
           alturaCm: alturaFinal,
           idPrueba: pruebaTargetId,
-          estado: "PENDIENTE", // Toda modificación fuerza retorno a auditoría
+          estado: "PENDIENTE",
           ...nuevosArchivosData,
         },
         include: {
           prueba: true,
-          deportista_pruebas_adicionales: { include: { prueba: true } },
+          deportista_pruebas_adicionales: {
+            include: { pruebas_especificas: true },
+          },
         },
       });
     });
