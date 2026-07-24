@@ -116,11 +116,19 @@ const obtenerArbolDelegaciones = async (req, res) => {
 const dictaminarAtleta = async (req, res) => {
   try {
     const { id } = req.params;
-    const { estado } = req.body;
+    const { estado, motivoRechazo } = req.body;
+
+    const dataUpdate = { estado: estado };
+
+    if (estado === "RECHAZADO" && motivoRechazo) {
+      dataUpdate.motivoRechazo = motivoRechazo;
+    } else if (estado === "APROBADO") {
+      dataUpdate.motivoRechazo = null; // Limpiar motivo si es aprobado
+    }
 
     const atletaActualizado = await prisma.deportista.update({
       where: { id: id },
-      data: { estado: estado },
+      data: dataUpdate,
     });
 
     return res

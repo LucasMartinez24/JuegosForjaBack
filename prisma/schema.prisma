@@ -92,6 +92,7 @@ model Deportista {
   pesoKg             Decimal?                    @map("peso_kg") @db.Decimal(5, 2)
   alturaCm           Int?                        @map("altura_cm")
   estado             EstadoInscripcion           @default(PENDIENTE)
+  motivoRechazo      String?                     @map("motivo_rechazo") @db.Text
   urlDniFrente       String                      @map("url_dni_frente") @db.VarChar(255)
   urlDniDorso        String                      @map("url_dni_dorso") @db.VarChar(255)
   urlFichaMedica     String                      @map("url_ficha_medica") @db.VarChar(255)
