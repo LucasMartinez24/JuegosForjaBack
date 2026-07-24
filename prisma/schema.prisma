@@ -99,9 +99,6 @@ model Deportista {
   urlCud             String?                     @map("url_cud") @db.VarChar(255)
   createdAt          DateTime                    @default(now()) @map("created_at")
   updatedAt          DateTime                    @updatedAt @map("updated_at")
-  
-  // 👁️ OJO: Dejamos el campo viejo acá arriba temporalmente para mapear el script
-  idPrueba2          Int?                        @map("id_prueba_2") 
 
   equipo             Equipo                      @relation(fields: [idEquipo], references: [id], onDelete: Cascade)
   prueba             PruebaEspecifica            @relation("PruebaPrincipal", fields: [idPrueba], references: [id], onDelete: Cascade)
