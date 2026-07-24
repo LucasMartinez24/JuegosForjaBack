@@ -20,9 +20,9 @@ const obtenerArbolDelegaciones = async (req, res) => {
           include: {
             prueba: true, // Carga la prueba física principal si existe
             // 🚀 INCLUSIÓN NATIVA: Mapeamos la tabla asociativa con sus pruebas_especificas
-            deportista_pruebas_adicionales: {
+            pruebasAdicionales: {
               include: {
-                pruebas_especificas: true,
+                prueba: true,
               },
             },
           },
@@ -66,7 +66,7 @@ const obtenerArbolDelegaciones = async (req, res) => {
 
       // Mapeamos los atletas inyectando las pruebas adicionales formateadas para Angular
       const atletasMapeados = equipo.deportistas.map((atleta) => {
-        const extras = atleta.deportista_pruebas_adicionales || [];
+        const extras = atleta.pruebasAdicionales || [];
 
         return {
           ...atleta,
@@ -75,7 +75,7 @@ const obtenerArbolDelegaciones = async (req, res) => {
             : { nombrePrueba: equipo.disciplina.nombre },
           // 🚀 Formateamos las pruebas adicionales de manera idéntica al panel de equipos
           pruebasAdicionales: extras.map((e) => ({
-            prueba: e.pruebas_especificas,
+            prueba: e.prueba,
           })),
         };
       });

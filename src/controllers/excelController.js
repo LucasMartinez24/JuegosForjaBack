@@ -44,9 +44,9 @@ const generarReporteExcel = async (req, res) => {
       include: {
         equipo: true,
         prueba: true,
-        deportista_pruebas_adicionales: {
+        pruebasAdicionales: {
           include: {
-            pruebas_especificas: true,
+            prueba: true,
           },
         },
       },
@@ -89,10 +89,10 @@ const generarReporteExcel = async (req, res) => {
       if (d.prueba && d.prueba.nombrePrueba) {
         pruebas.push(d.prueba.nombrePrueba);
       }
-      if (d.deportista_pruebas_adicionales && d.deportista_pruebas_adicionales.length > 0) {
-        d.deportista_pruebas_adicionales.forEach((pa) => {
-          if (pa.pruebas_especificas && pa.pruebas_especificas.nombrePrueba) {
-            pruebas.push(pa.pruebas_especificas.nombrePrueba);
+      if (d.pruebasAdicionales && d.pruebasAdicionales.length > 0) {
+        d.pruebasAdicionales.forEach((pa) => {
+          if (pa.prueba && pa.prueba.nombrePrueba) {
+            pruebas.push(pa.prueba.nombrePrueba);
           }
         });
       }

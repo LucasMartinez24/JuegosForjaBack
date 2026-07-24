@@ -114,9 +114,9 @@ const obtenerEstadoPanel = async (req, res) => {
         deportistas: {
           include: {
             prueba: true,
-            deportista_pruebas_adicionales: {
+            pruebasAdicionales: {
               include: {
-                pruebas_especificas: true,
+                prueba: true,
               },
             },
           },
@@ -128,9 +128,9 @@ const obtenerEstadoPanel = async (req, res) => {
     let equipoFormateado = null;
     if (miEquipo) {
       const listaJugadoresConPruebas = miEquipo.deportistas.map((jugador) => {
-        const adicionales = jugador.deportista_pruebas_adicionales || [];
+        const adicionales = jugador.pruebasAdicionales || [];
         const nombreSegundaPrueba =
-          adicionales[0]?.pruebas_especificas?.nombrePrueba || null;
+          adicionales[0]?.prueba?.nombrePrueba || null;
         const idPrueba2 =
           adicionales[0]?.idPrueba || adicionales[0]?.id_prueba || null;
 
@@ -140,10 +140,10 @@ const obtenerEstadoPanel = async (req, res) => {
           nombrePrueba2: nombreSegundaPrueba,
           pruebasAdicionales: adicionales.map((ad) => ({
             idPrueba: ad.idPrueba || ad.id_prueba,
-            prueba: ad.pruebas_especificas,
+            prueba: ad.prueba,
           })),
           listaPruebasCompletas: adicionales.map(
-            (ad) => ad.pruebas_especificas,
+            (ad) => ad.prueba,
           ),
         };
       });
@@ -467,9 +467,9 @@ const registrarJugador = async (req, res) => {
     };
 
     if (idsAdicionales.length > 0) {
-      deportistaData.deportista_pruebas_adicionales = {
+      deportistaData.pruebasAdicionales = {
         create: idsAdicionales.map((id) => ({
-          pruebas_especificas: { connect: { id } },
+          prueba: { connect: { id } },
         })),
       };
     }
@@ -478,8 +478,8 @@ const registrarJugador = async (req, res) => {
       data: deportistaData,
       include: {
         prueba: true,
-        deportista_pruebas_adicionales: {
-          include: { pruebas_especificas: true },
+        pruebasAdicionales: {
+          include: { prueba: true },
         },
       },
     });
@@ -636,16 +636,16 @@ const editarJugador = async (req, res) => {
 
     const atletaActualizado = await prisma.$transaction(async (tx) => {
       // 🚀 CORREGIDO: Usamos el argumento exacto del modelo nativo: id_deportista
-      await tx.deportista_pruebas_adicionales.deleteMany({
-        where: { id_deportista: id },
+      await tx.deportistaPruebaAdicional.deleteMany({
+        where: { idDeportista: id },
       });
 
       // 🚀 CORREGIDO: Usamos id_deportista e id_prueba en el createMany relacional nativo
       if (idsAdicionales.length > 0) {
-        await tx.deportista_pruebas_adicionales.createMany({
+        await tx.deportistaPruebaAdicional.createMany({
           data: idsAdicionales.map((idPrueba) => ({
-            id_deportista: id,
-            id_prueba: idPrueba,
+            idDeportista: id,
+            idPrueba: idPrueba,
           })),
         });
       }
@@ -668,8 +668,8 @@ const editarJugador = async (req, res) => {
         },
         include: {
           prueba: true,
-          deportista_pruebas_adicionales: {
-            include: { pruebas_especificas: true },
+          pruebasAdicionales: {
+            include: { prueba: true },
           },
         },
       });
