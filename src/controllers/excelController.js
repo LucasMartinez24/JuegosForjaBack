@@ -44,55 +44,126 @@ const generarReporteExcel = async (req, res) => {
       include: {
         equipo: true,
         prueba: true,
+        pruebasAdicionales: {
+          include: {
+            prueba: true,
+          },
+        },
       },
     });
 
-    // Si es general, ordenamos por deporte para que queden divididos/agrupados
-    if (tipo === "general") {
-      datos.sort((a, b) => {
-        const depA = a.deporteAsignado ? a.deporteAsignado.toUpperCase() : "Z_SIN_DEPORTE";
-        const depB = b.deporteAsignado ? b.deporteAsignado.toUpperCase() : "Z_SIN_DEPORTE";
-        if (depA < depB) return -1;
-        if (depA > depB) return 1;
-        
-        // Orden secundario por municipio
-        const munA = a.equipo ? a.equipo.municipio.toUpperCase() : "Z_SIN_MUNICIPIO";
-        const munB = b.equipo ? b.equipo.municipio.toUpperCase() : "Z_SIN_MUNICIPIO";
-        if (munA < munB) return -1;
-        if (munA > munB) return 1;
-        return 0;
-      });
-    }
+    // Agrupar por "deporteAsignado"
+    const gruposPorDeporte = {};
+    datos.forEach((d) => {
+      const deporte = d.deporteAsignado || "Sin Deporte";
+      if (!gruposPorDeporte[deporte]) {
+        gruposPorDeporte[deporte] = [];
+      }
+      gruposPorDeporte[deporte].push(d);
+    });
+
+    // Funciones auxiliares
+    const calcularEdad = (fechaNacimiento) => {
+      if (!fechaNacimiento) return "N/A";
+      const hoy = new Date();
+      const nac = new Date(fechaNacimiento);
+      let edad = hoy.getFullYear() - nac.getFullYear();
+      const m = hoy.getMonth() - nac.getMonth();
+      if (m < 0 || (m === 0 && hoy.getDate() < nac.getDate())) {
+        edad--;
+      }
+      return edad;
+    };
+
+    const formatearFecha = (fecha) => {
+      if (!fecha) return "N/A";
+      const f = new Date(fecha);
+      const dia = String(f.getDate()).padStart(2, "0");
+      const mes = String(f.getMonth() + 1).padStart(2, "0");
+      const anio = f.getFullYear();
+      return `${dia}/${mes}/${anio}`;
+    };
+
+    const obtenerPruebas = (d) => {
+      let pruebas = [];
+      if (d.prueba && d.prueba.nombrePrueba) {
+        pruebas.push(d.prueba.nombrePrueba);
+      }
+      if (d.pruebasAdicionales && d.pruebasAdicionales.length > 0) {
+        d.pruebasAdicionales.forEach((pa) => {
+          if (pa.prueba && pa.prueba.nombrePrueba) {
+            pruebas.push(pa.prueba.nombrePrueba);
+          }
+        });
+      }
+      return pruebas.join(", ");
+    };
 
     // Paso 3: Generar Excel
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("Reporte de Atletas");
 
-    worksheet.columns = [
-      { header: "Deporte", key: "deporte", width: 25 },
-      { header: "Municipio", key: "municipio", width: 25 },
-      { header: "Apellido", key: "apellido", width: 20 },
-      { header: "Nombre", key: "nombre", width: 20 },
-      { header: "DNI", key: "dni", width: 15 },
-      { header: "Equipo", key: "equipo", width: 25 },
-      { header: "Prueba", key: "prueba", width: 30 },
-      { header: "Estado", key: "estado", width: 15 },
-    ];
+    Object.keys(gruposPorDeporte).forEach((deporte) => {
+      // Limpiar nombre de hoja para que sea válido en Excel (max 31 chars y sin caracteres especiales)
+      let safeSheetName = deporte.substring(0, 31).replace(/[\\*?:/\[\]]/g, "");
+      if (!safeSheetName) safeSheetName = "Deporte";
 
-    worksheet.getRow(1).font = { bold: true };
+      const worksheet = workbook.addWorksheet(safeSheetName);
 
-    datos.forEach((d) => {
-      worksheet.addRow({
-        deporte: d.deporteAsignado || "Sin Deporte",
-        municipio: d.equipo ? d.equipo.municipio : "N/A",
-        apellido: d.apellido,
-        nombre: d.nombre,
-        dni: d.dni,
-        equipo: d.equipo ? d.equipo.nombre : "Sin Equipo",
-        prueba: d.prueba ? d.prueba.nombrePrueba : "N/A",
-        estado: d.estado,
+      worksheet.columns = [
+        { header: "Apellido", key: "apellido", width: 20 },
+        { header: "Nombre", key: "nombre", width: 20 },
+        { header: "DNI", key: "dni", width: 15 },
+        { header: "Fecha de Nac.", key: "fechaNacimiento", width: 15 },
+        { header: "Edad", key: "edad", width: 10 },
+        { header: "Género", key: "genero", width: 15 },
+        { header: "Altura (cm)", key: "altura", width: 15 },
+        { header: "Peso (kg)", key: "peso", width: 15 },
+        { header: "Pruebas Asignadas", key: "pruebas", width: 45 },
+        { header: "Municipio", key: "municipio", width: 25 },
+        { header: "Equipo", key: "equipo", width: 30 },
+        { header: "Estado", key: "estado", width: 15 },
+      ];
+
+      worksheet.getRow(1).font = { bold: true };
+
+      // Ordenamos los atletas dentro de cada hoja (por municipio y luego por apellido)
+      const datosDeporte = gruposPorDeporte[deporte];
+      datosDeporte.sort((a, b) => {
+        const munA = a.equipo ? a.equipo.municipio.toUpperCase() : "Z_SIN";
+        const munB = b.equipo ? b.equipo.municipio.toUpperCase() : "Z_SIN";
+        if (munA < munB) return -1;
+        if (munA > munB) return 1;
+
+        const apeA = a.apellido ? a.apellido.toUpperCase() : "Z";
+        const apeB = b.apellido ? b.apellido.toUpperCase() : "Z";
+        if (apeA < apeB) return -1;
+        if (apeA > apeB) return 1;
+        return 0;
+      });
+
+      datosDeporte.forEach((d) => {
+        worksheet.addRow({
+          apellido: d.apellido,
+          nombre: d.nombre,
+          dni: d.dni,
+          fechaNacimiento: formatearFecha(d.fechaNacimiento),
+          edad: calcularEdad(d.fechaNacimiento),
+          genero: d.genero || "N/A",
+          altura: d.alturaCm !== null ? d.alturaCm : "N/A",
+          peso: d.pesoKg !== null ? d.pesoKg : "N/A",
+          pruebas: obtenerPruebas(d),
+          municipio: d.equipo ? d.equipo.municipio : "N/A",
+          equipo: d.equipo ? d.equipo.nombre : "Sin Equipo",
+          estado: d.estado,
+        });
       });
     });
+
+    // Manejo de caso sin datos
+    if (Object.keys(gruposPorDeporte).length === 0) {
+      const worksheet = workbook.addWorksheet("Sin Datos");
+      worksheet.addRow(["No se encontraron atletas para el reporte."]);
+    }
 
     res.setHeader(
       "Content-Type",
