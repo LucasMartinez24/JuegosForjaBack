@@ -28,15 +28,18 @@ const generarReporteExcel = async (req, res) => {
         ? { idPrueba: { in: idsPruebas } }
         : { idPrueba: { in: [] } };
     } else if (tipo === "municipio") {
-      // Filtrar por equipo relacionad  o
+      // Filtrar por equipo relacionado
       filtro = { equipo: { municipio: valor } };
     } else if (tipo === "equipo") {
       // Filtrar por equipo ID directamente
       filtro = { idEquipo: valor };
+    } else if (tipo === "general") {
+      // Sin filtro, traer todos
+      filtro = {};
     }
 
     // Paso 2: Obtener los deportistas
-    const datos = await prisma.deportista.findMany({
+    let datos = await prisma.deportista.findMany({
       where: filtro,
       include: {
         equipo: true,
@@ -44,11 +47,23 @@ const generarReporteExcel = async (req, res) => {
       },
     });
 
+    // Si es general, ordenamos por municipio para que queden divididos/agrupados
+    if (tipo === "general") {
+      datos.sort((a, b) => {
+        const munA = a.equipo ? a.equipo.municipio.toUpperCase() : "Z_SIN_MUNICIPIO";
+        const munB = b.equipo ? b.equipo.municipio.toUpperCase() : "Z_SIN_MUNICIPIO";
+        if (munA < munB) return -1;
+        if (munA > munB) return 1;
+        return 0;
+      });
+    }
+
     // Paso 3: Generar Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Reporte de Atletas");
 
     worksheet.columns = [
+      { header: "Municipio", key: "municipio", width: 25 },
       { header: "Apellido", key: "apellido", width: 20 },
       { header: "Nombre", key: "nombre", width: 20 },
       { header: "DNI", key: "dni", width: 15 },
@@ -61,6 +76,7 @@ const generarReporteExcel = async (req, res) => {
 
     datos.forEach((d) => {
       worksheet.addRow({
+        municipio: d.equipo ? d.equipo.municipio : "N/A",
         apellido: d.apellido,
         nombre: d.nombre,
         dni: d.dni,
