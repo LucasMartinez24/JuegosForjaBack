@@ -47,9 +47,15 @@ const generarReporteExcel = async (req, res) => {
       },
     });
 
-    // Si es general, ordenamos por municipio para que queden divididos/agrupados
+    // Si es general, ordenamos por deporte para que queden divididos/agrupados
     if (tipo === "general") {
       datos.sort((a, b) => {
+        const depA = a.deporteAsignado ? a.deporteAsignado.toUpperCase() : "Z_SIN_DEPORTE";
+        const depB = b.deporteAsignado ? b.deporteAsignado.toUpperCase() : "Z_SIN_DEPORTE";
+        if (depA < depB) return -1;
+        if (depA > depB) return 1;
+        
+        // Orden secundario por municipio
         const munA = a.equipo ? a.equipo.municipio.toUpperCase() : "Z_SIN_MUNICIPIO";
         const munB = b.equipo ? b.equipo.municipio.toUpperCase() : "Z_SIN_MUNICIPIO";
         if (munA < munB) return -1;
@@ -63,6 +69,7 @@ const generarReporteExcel = async (req, res) => {
     const worksheet = workbook.addWorksheet("Reporte de Atletas");
 
     worksheet.columns = [
+      { header: "Deporte", key: "deporte", width: 25 },
       { header: "Municipio", key: "municipio", width: 25 },
       { header: "Apellido", key: "apellido", width: 20 },
       { header: "Nombre", key: "nombre", width: 20 },
@@ -76,6 +83,7 @@ const generarReporteExcel = async (req, res) => {
 
     datos.forEach((d) => {
       worksheet.addRow({
+        deporte: d.deporteAsignado || "Sin Deporte",
         municipio: d.equipo ? d.equipo.municipio : "N/A",
         apellido: d.apellido,
         nombre: d.nombre,
