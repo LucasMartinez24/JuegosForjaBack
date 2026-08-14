@@ -659,6 +659,137 @@ const obtenerCatalogoDisciplinas = async (req, res) => {
 };
 
 // =========================================================================
+// 11. CRUD DE DELEGADOS (Representantes de Equipos)
+//     - GET  /api/admin/delegados      -> lista todos los usuarios rol EQUIPO
+//     - PUT  /api/admin/delegado/:idUsuario -> actualiza datos/contraseña
+// =========================================================================
+const listarDelegados = async (req, res) => {
+  try {
+    const usuarios = await prisma.usuario.findMany({
+      where: { rol: "EQUIPO" },
+      include: {
+        localidad: true,
+        equipo: {
+          include: {
+            disciplina: true,
+            _count: { select: { deportistas: true } },
+          },
+        },
+      },
+      orderBy: [{ apellido: "asc" }, { nombre: "asc" }],
+    });
+
+    const resultado = usuarios.map((u) => ({
+      idUsuario: u.id,
+      username: u.username,
+      dni: u.dni,
+      nombre: u.nombre,
+      apellido: u.apellido,
+      localidad: u.localidad?.nombre || u.equipo?.municipio || null,
+      equipo: u.equipo
+        ? {
+            idEquipo: u.equipo.id,
+            nombre: u.equipo.nombre,
+            siglas: u.equipo.siglas,
+            disciplina: u.equipo.disciplina?.nombre || null,
+            totalAtletas: u.equipo._count?.deportistas ?? 0,
+          }
+        : null,
+    }));
+
+    return res.status(200).json(resultado);
+  } catch (error) {
+    console.error("❌ ERROR AL LISTAR DELEGADOS:", error);
+    return res
+      .status(500)
+      .json({ error: "No se pudo obtener el listado de delegados." });
+  }
+};
+
+const actualizarDelegado = async (req, res) => {
+  try {
+    const { idUsuario } = req.params;
+    const { username, dni, nombre, apellido, password } = req.body;
+
+    const id = parseInt(idUsuario, 10);
+    if (isNaN(id)) {
+      return res.status(400).json({ error: "ID de usuario inválido." });
+    }
+
+    if (!username || !dni || !nombre || !apellido) {
+      return res
+        .status(400)
+        .json({ error: "Todos los campos del delegado son obligatorios." });
+    }
+
+    const usuario = await prisma.usuario.findUnique({ where: { id } });
+    if (!usuario || usuario.rol !== "EQUIPO") {
+      return res
+        .status(404)
+        .json({ error: "El delegado indicado no existe." });
+    }
+
+    const usernameFormateado = username.toLowerCase().trim();
+    const conflictivo = await prisma.usuario.findFirst({
+      where: {
+        AND: [
+          {
+            OR: [
+              { username: usernameFormateado },
+              { dni: dni.trim() },
+            ],
+          },
+          { NOT: { id } },
+        ],
+      },
+    });
+    if (conflictivo) {
+      const causante =
+        conflictivo.username === usernameFormateado
+          ? "El nombre de usuario"
+          : "El DNI";
+      return res
+        .status(400)
+        .json({ error: `${causante} ya se encuentra registrado.` });
+    }
+
+    const dataUpdate = {
+      username: usernameFormateado,
+      dni: dni.trim(),
+      nombre: nombre.trim(),
+      apellido: apellido.trim(),
+    };
+
+    if (password && password.toString().trim().length > 0) {
+      const bcrypt = require("bcryptjs");
+      const salt = await bcrypt.genSalt(10);
+      dataUpdate.passwordHash = await bcrypt.hash(password, salt);
+    }
+
+    const actualizado = await prisma.usuario.update({
+      where: { id },
+      data: dataUpdate,
+    });
+
+    return res.status(200).json({
+      mensaje: "Datos del delegado actualizados con éxito.",
+      delegado: {
+        idUsuario: actualizado.id,
+        username: actualizado.username,
+        dni: actualizado.dni,
+        nombre: actualizado.nombre,
+        apellido: actualizado.apellido,
+      },
+    });
+  } catch (error) {
+    console.error("❌ ERROR AL ACTUALIZAR DELEGADO:", error);
+    return res
+      .status(500)
+      .json({ error: "Error interno al actualizar el delegado." });
+  }
+};
+
+// =========================================================================
 // FUNCIÓN AUXILIAR: Purgado de Binarios
 // =========================================================================
 const borrarArchivoFisico = (rutaRelativaWeb) => {
@@ -691,4 +822,6 @@ module.exports = {
   crearClubConUsuario,
   obtenerEquiposPorDisciplinaYRama,
   obtenerCatalogoDisciplinas,
+  listarDelegados,
+  actualizarDelegado,
 };

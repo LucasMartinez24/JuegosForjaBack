@@ -27,7 +27,36 @@ const obtenerMaxPruebas = (nombreDisciplina) => {
 };
 
 const validarPesoAltura = (prueba, peso, altura) => {
-  if (!prueba?.requierePeso) return { ok: true };
+  // La disciplina NO exige peso: aun así, si el operador cargó peso/altura
+  // los validamos y guardamos (campos opcionales pero persistibles).
+  if (!prueba?.requierePeso) {
+    let pesoFinal = null;
+    let alturaFinal = null;
+
+    if (peso && peso.toString().trim() !== "") {
+      const p = parseFloat(peso.toString().replace(",", "."));
+      if (isNaN(p) || p <= 0) {
+        return {
+          ok: false,
+          error: `El peso ingresado (${peso}) no es válido. Ingresá un número mayor a 0 (en kg).`,
+        };
+      }
+      pesoFinal = p;
+    }
+
+    if (altura && altura.toString().trim() !== "") {
+      const a = parseInt(altura, 10);
+      if (isNaN(a) || a < 100 || a > 250) {
+        return {
+          ok: false,
+          error: `La altura ingresada (${altura} cm) no es válida. Ingresá un valor realista entre 100 y 250 cm.`,
+        };
+      }
+      alturaFinal = a;
+    }
+
+    return { ok: true, pesoFinal, alturaFinal };
+  }
 
   if (!peso || peso.toString().trim() === "") {
     return {
@@ -488,10 +517,297 @@ const listarEquiposDisponibles = async (req, res) => {
   }
 };
 
+// =========================================================================
+// ENDPOINT: PUT /api/admin/actualizar-atleta/:id
+// Edita los datos y las pruebas de un atleta SIN reemplazar su documentación.
+// Re-valida las mismas reglas que el alta (edad, género, peso, cupo, pruebas).
+// El atleta conserva su equipo y su disciplina.
+// =========================================================================
+const actualizarAtleta = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      dni,
+      nombre,
+      apellido,
+      fechaNacimiento,
+      genero,
+      peso,
+      altura,
+      idPrueba1,
+    } = req.body;
+
+    if (!dni || !nombre || !apellido || !fechaNacimiento || !genero) {
+      return res.status(400).json({
+        error: "Todos los datos esenciales del atleta son requeridos.",
+      });
+    }
+
+    const atleta = await prisma.deportista.findUnique({
+      where: { id },
+      include: { equipo: { include: { disciplina: true } } },
+    });
+    if (!atleta) {
+      return res.status(404).json({ error: "El atleta indicado no existe." });
+    }
+    const equipo = atleta.equipo;
+
+    const pruebaTargetId = idPrueba1 ? parseInt(idPrueba1, 10) : null;
+    if (!pruebaTargetId) {
+      return res.status(400).json({
+        error: "Debe seleccionar al menos una prueba específica de competencia.",
+      });
+    }
+
+    let pruebasAdicionalesIds = [];
+    if (req.body.pruebasAdicionales) {
+      if (Array.isArray(req.body.pruebasAdicionales)) {
+        pruebasAdicionalesIds = req.body.pruebasAdicionales;
+      } else {
+        try {
+          const parsed = JSON.parse(req.body.pruebasAdicionales);
+          if (Array.isArray(parsed)) pruebasAdicionalesIds = parsed;
+        } catch {
+          pruebasAdicionalesIds = [];
+        }
+      }
+    }
+
+    const maxPruebas = obtenerMaxPruebas(equipo.disciplina.nombre);
+    const idsUnicos = [
+      ...new Set([
+        pruebaTargetId,
+        ...pruebasAdicionalesIds.map((idP) => parseInt(idP, 10)),
+      ]),
+    ];
+
+    if (idsUnicos.length > maxPruebas) {
+      return res.status(400).json({
+        error: `Superó el límite de pruebas. Para "${equipo.disciplina.nombre}" puede inscribirse en un máximo de ${maxPruebas} prueba(s).`,
+      });
+    }
+
+    const pruebasSeleccionadas = await prisma.pruebaEspecifica.findMany({
+      where: { id: { in: idsUnicos } },
+    });
+
+    if (pruebasSeleccionadas.length !== idsUnicos.length) {
+      return res.status(404).json({
+        error: "Una o más de las categorías seleccionadas no existen.",
+      });
+    }
+
+    const pruebaFueraDeDisciplina = pruebasSeleccionadas.find(
+      (p) => p.idDisciplina !== equipo.idDisciplina,
+    );
+    if (pruebaFueraDeDisciplina) {
+      return res.status(400).json({
+        error: `La prueba "${pruebaFueraDeDisciplina.nombrePrueba}" no pertenece a la disciplina de su delegación.`,
+      });
+    }
+
+    const pruebaPrincipal = pruebasSeleccionadas.find(
+      (p) => p.id === pruebaTargetId,
+    );
+
+    const anioNacimientoAtleta = new Date(fechaNacimiento).getFullYear();
+    for (const p of pruebasSeleccionadas) {
+      if (
+        anioNacimientoAtleta < p.anioNacimientoMin ||
+        anioNacimientoAtleta > p.anioNacimientoMax
+      ) {
+        return res.status(400).json({
+          error: `Edad no permitida para "${p.nombrePrueba}". El atleta debe haber nacido entre ${p.anioNacimientoMin} y ${p.anioNacimientoMax} (nació en ${anioNacimientoAtleta}).`,
+        });
+      }
+      if (p.genero !== "MIXTO" && p.genero !== genero) {
+        return res.status(400).json({
+          error: `La prueba "${p.nombrePrueba}" es exclusiva de la rama ${p.genero}, no coincide con el género del atleta.`,
+        });
+      }
+    }
+
+    const validacionPeso = validarPesoAltura(pruebaPrincipal, peso, altura);
+    if (!validacionPeso.ok) {
+      return res.status(400).json({ error: validacionPeso.error });
+    }
+    const pesoFinal = validacionPeso.pesoFinal ?? null;
+    const alturaFinal = validacionPeso.alturaFinal ?? null;
+
+    const nombreDisciplinaActual = equipo.disciplina.nombre.toUpperCase().trim();
+    const esDeporteColectivo = deportesEstrictamenteColectivos.includes(
+      nombreDisciplinaActual,
+    );
+
+    if (
+      esDeporteColectivo &&
+      pruebaPrincipal.id !== atleta.idPrueba
+    ) {
+      const cantidadActual = await prisma.deportista.count({
+        where: { idEquipo: equipo.id, idPrueba: pruebaPrincipal.id },
+      });
+      if (cantidadActual >= pruebaPrincipal.maxJugadores) {
+        return res.status(400).json({
+          error: `Cupo Máximo Alcanzado. "${pruebaPrincipal.nombrePrueba}" solo admite ${pruebaPrincipal.maxJugadores} jugadores por delegación.`,
+        });
+      }
+    }
+
+    const atletaDuplicadoEnEquipo = await prisma.deportista.findFirst({
+      where: { dni: dni.trim(), idEquipo: equipo.id, NOT: { id } },
+    });
+    if (atletaDuplicadoEnEquipo) {
+      return res.status(400).json({
+        error: "Este deportista ya se encuentra pre-inscripto en su equipo.",
+      });
+    }
+
+    const idsAdicionales = idsUnicos.filter((idP) => idP !== pruebaTargetId);
+
+    const atletaActualizado = await prisma.$transaction(async (tx) => {
+      await tx.deportistaPruebaAdicional.deleteMany({
+        where: { idDeportista: id },
+      });
+      return tx.deportista.update({
+        where: { id },
+        data: {
+          dni: dni.trim(),
+          nombre: nombre.trim(),
+          apellido: apellido.trim(),
+          fechaNacimiento: new Date(fechaNacimiento),
+          genero,
+          pesoKg: pesoFinal,
+          alturaCm: alturaFinal,
+          idPrueba: pruebaPrincipal.id,
+          ...(idsAdicionales.length > 0
+            ? {
+                pruebasAdicionales: {
+                  create: idsAdicionales.map((idP) => ({
+                    prueba: { connect: { id: idP } },
+                  })),
+                },
+              }
+            : {}),
+        },
+        include: {
+          prueba: true,
+          pruebasAdicionales: { include: { prueba: true } },
+        },
+      });
+    });
+
+    return res.status(200).json({
+      mensaje: "Atleta actualizado con éxito.",
+      atleta: atletaActualizado,
+    });
+  } catch (error) {
+    console.error("❌ ERROR AL ACTUALIZAR ATLETA (ADMIN):", error);
+    return res
+      .status(500)
+      .json({ error: "Error interno al actualizar el atleta." });
+  }
+};
+
+// =========================================================================
+// ENDPOINT: DELETE /api/admin/eliminar-atleta/:id
+// Baja lógica-física de un atleta: elimina el registro, sus pruebas
+// adicionales (en cascada) y los archivos de documentación del disco.
+// =========================================================================
+const eliminarAtleta = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const atleta = await prisma.deportista.findUnique({ where: { id } });
+    if (!atleta) {
+      return res
+        .status(404)
+        .json({ error: "El atleta que intenta eliminar no existe." });
+    }
+
+    borrarArchivoFisico(atleta.urlDniFrente);
+    borrarArchivoFisico(atleta.urlDniDorso);
+    borrarArchivoFisico(atleta.urlFichaMedica);
+    if (atleta.urlCud) borrarArchivoFisico(atleta.urlCud);
+
+    await prisma.deportista.delete({ where: { id } });
+
+    return res.status(200).json({
+      mensaje: `El atleta "${atleta.apellido}, ${atleta.nombre}" fue eliminado del sistema.`,
+    });
+  } catch (error) {
+    console.error("❌ ERROR AL ELIMINAR ATLETA (ADMIN):", error);
+    return res
+      .status(500)
+      .json({ error: "Error interno al eliminar el atleta." });
+  }
+};
+
+// =========================================================================
+// ENDPOINT: GET /api/admin/atleta/:id
+// Devuelve la ficha COMPLETA de un atleta (datos + prueba + adicionales +
+// equipo/disciplina). Lo usa el modal de edición para pre-cargar TODO,
+// evitando depender de los datos parciales que trae el árbol/grilla.
+// =========================================================================
+const obtenerAtletaDetalle = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const atleta = await prisma.deportista.findUnique({
+      where: { id },
+      include: {
+        prueba: true,
+        pruebasAdicionales: { include: { prueba: true } },
+        equipo: {
+          include: {
+            disciplina: true,
+            usuario: { include: { localidad: true } },
+          },
+        },
+      },
+    });
+
+    if (!atleta) {
+      return res.status(404).json({ error: "El atleta indicado no existe." });
+    }
+
+    return res.status(200).json({
+      ...atleta,
+      prueba: atleta.prueba || {
+        nombrePrueba: atleta.equipo?.disciplina?.nombre || "Prueba General",
+      },
+      pruebasAdicionales: (atleta.pruebasAdicionales || []).map((e) => ({
+        prueba: e.prueba,
+      })),
+      equipo: atleta.equipo
+        ? {
+            idEquipo: atleta.equipo.id,
+            nombreEquipo: atleta.equipo.nombre,
+            siglas: atleta.equipo.siglas,
+            municipio: atleta.equipo.municipio,
+            disciplina: atleta.equipo.disciplina?.nombre || null,
+            idDisciplina: atleta.equipo.idDisciplina,
+            tipoDisciplina: atleta.equipo.disciplina?.tipo || "CONVENCIONAL",
+            localidadNombre:
+              atleta.equipo.usuario?.localidad?.nombre ||
+              atleta.equipo.municipio,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error("❌ ERROR AL OBTENER DETALLE DE ATLETA:", error);
+    return res
+      .status(500)
+      .json({ error: "No se pudo recuperar la ficha del atleta." });
+  }
+};
+
 module.exports = {
   agregarAtletaAEquipo,
   obtenerPruebasPorDisciplina,
   listarEquiposDisponibles,
+  actualizarAtleta,
+  eliminarAtleta,
+  obtenerAtletaDetalle,
   // Exportados por si futuro flujo los reutiliza:
   procesarAltaAtleta,
 };

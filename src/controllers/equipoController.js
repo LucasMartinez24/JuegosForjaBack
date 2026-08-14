@@ -18,7 +18,36 @@ const obtenerMaxPruebas = (nombreDisciplina) => {
 // AUX: Valida peso/altura con mensajes específicos y accionables
 // =========================================================================
 const validarPesoAltura = (prueba, peso, altura) => {
-  if (!prueba?.requierePeso) return { ok: true };
+  // La disciplina NO exige peso: aun así, si se cargó peso/altura los
+  // validamos y guardamos (campos opcionales pero persistibles).
+  if (!prueba?.requierePeso) {
+    let pesoFinal = null;
+    let alturaFinal = null;
+
+    if (peso && peso.toString().trim() !== "") {
+      const p = parseFloat(peso.toString().replace(",", "."));
+      if (isNaN(p) || p <= 0) {
+        return {
+          ok: false,
+          error: `El peso ingresado (${peso}) no es válido. Ingresá un número mayor a 0 (en kg).`,
+        };
+      }
+      pesoFinal = p;
+    }
+
+    if (altura && altura.toString().trim() !== "") {
+      const a = parseInt(altura, 10);
+      if (isNaN(a) || a < 100 || a > 250) {
+        return {
+          ok: false,
+          error: `La altura ingresada (${altura} cm) no es válida. Ingresá un valor realista entre 100 y 250 cm.`,
+        };
+      }
+      alturaFinal = a;
+    }
+
+    return { ok: true, pesoFinal, alturaFinal };
+  }
 
   if (!peso || peso.toString().trim() === "") {
     return {

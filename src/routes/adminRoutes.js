@@ -64,4 +64,29 @@ router.post(
   adminAtletaController.agregarAtletaAEquipo,
 );
 
+// ✏️ EDICIÓN Y BAJA DE ATLETAS (Roster Admin)
+router.get(
+  "/atleta/:id",
+  verificarRol(["ADMIN"]),
+  adminAtletaController.obtenerAtletaDetalle,
+);
+router.put(
+  "/actualizar-atleta/:id",
+  verificarRol(["ADMIN"]),
+  adminAtletaController.actualizarAtleta,
+);
+router.delete(
+  "/eliminar-atleta/:id",
+  verificarRol(["ADMIN"]),
+  adminAtletaController.eliminarAtleta,
+);
+
+// 🪪 CRUD DE DELEGADOS (Representantes de Equipos)
+router.get("/delegados", verificarRol(["ADMIN"]), adminController.listarDelegados);
+router.put(
+  "/delegado/:idUsuario",
+  verificarRol(["ADMIN"]),
+  adminController.actualizarDelegado,
+);
+
 module.exports = router;
