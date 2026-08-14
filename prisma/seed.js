@@ -1,6 +1,6 @@
 // prisma/seed.js
 const prisma = require("../src/config/db");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 
 async function main() {
   console.log(

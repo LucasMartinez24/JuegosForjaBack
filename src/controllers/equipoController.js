@@ -90,12 +90,13 @@ const validarPesoAltura = (prueba, peso, altura) => {
 // =========================================================================
 const obtenerEstadoPanel = async (req, res) => {
   try {
-    const usuarioId = req.usuario?.id || req.query.usuarioId;
+    // SEGURIDAD: el id de usuario SIEMPRE sale del token, jamás del query string.
+    const usuarioId = req.usuario.id;
 
     if (!usuarioId) {
       return res
-        .status(400)
-        .json({ error: "Identificador de usuario ausente." });
+        .status(401)
+        .json({ error: "Token sin identificador de usuario." });
     }
 
     const pruebasGlobales = await prisma.pruebaEspecifica.findMany({
@@ -173,8 +174,8 @@ const obtenerEstadoPanel = async (req, res) => {
 const registrarEquipo = async (req, res) => {
   try {
     const { nombreEquipo, idDisciplina } = req.body;
-    const usuarioIdRaw = req.usuario?.id || req.body.usuarioId;
-    const usuarioId = parseInt(usuarioIdRaw, 10);
+    // SEGURIDAD: usuarioId solo del token.
+    const usuarioId = parseInt(req.usuario.id, 10);
 
     if (isNaN(usuarioId)) {
       return res
@@ -270,7 +271,10 @@ const registrarJugador = async (req, res) => {
       }
     }
 
-    const usuarioId = req.usuario?.id || req.body.usuarioId;
+    // SEGURIDAD: usuarioId solo del token (se mantiene en req.body como fallback
+    // porque multer puede requerirlo en algún flujo, pero el front nunca debería
+    // enviarlo).
+    const usuarioId = req.usuario.id;
 
     if (!dni || !nombre || !apellido || !fechaNacimiento || !genero) {
       return res.status(400).json({
@@ -284,6 +288,11 @@ const registrarJugador = async (req, res) => {
       !req.files["dniDorso"] ||
       !req.files["fichaMedica"]
     ) {
+      // Antifuga: si el usuario subió 1 o 2 archivos, los borramos del disco
+      if (req.files)
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
       return res.status(400).json({
         error:
           "Documentación incompleta. Debe adjuntar los 3 archivos obligatorios.",
@@ -588,6 +597,29 @@ const editarJugador = async (req, res) => {
     const pruebasSeleccionadas = await prisma.pruebaEspecifica.findMany({
       where: { id: { in: idsUnicos } },
     });
+
+    if (pruebasSeleccionadas.length !== idsUnicos.length) {
+      if (req.files)
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      return res.status(404).json({
+        error: "Una o más de las categorías seleccionadas no existen.",
+      });
+    }
+
+    const pruebaFueraDeDisciplina = pruebasSeleccionadas.find(
+      (p) => p.idDisciplina !== atletaExistente.equipo.idDisciplina,
+    );
+    if (pruebaFueraDeDisciplina) {
+      if (req.files)
+        Object.values(req.files)
+          .flat()
+          .forEach((f) => fs.unlinkSync(f.path));
+      return res.status(400).json({
+        error: `La prueba "${pruebaFueraDeDisciplina.nombrePrueba}" no pertenece a la disciplina de su delegación.`,
+      });
+    }
 
     const pruebaPrincipal = pruebasSeleccionadas.find(
       (p) => p.id === pruebaTargetId,

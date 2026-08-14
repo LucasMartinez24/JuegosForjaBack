@@ -14,8 +14,13 @@ const verificarRol = (rolesPermitidos) => {
     const token = authHeader.split(" ")[1];
 
     try {
-      // 🚀 CORREGIDO: Agregamos el mismo string de respaldo que usas en el Login
-      const claveSecreta = process.env.JWT_SECRET || "FORJA_SECRET_KEY_2026";
+      // Fail-closed: si falta el secreto, no se verifica ninguna firma
+      const claveSecreta = process.env.JWT_SECRET;
+      if (!claveSecreta) {
+        return res
+          .status(500)
+          .json({ error: "Configuración del servidor incompleta (JWT_SECRET)." });
+      }
 
       const decoded = jwt.verify(token, claveSecreta);
       req.usuario = decoded;

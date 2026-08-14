@@ -149,6 +149,13 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: "Credenciales inválidas." });
     }
 
+    // Fail-closed: sin JWT_SECRET no se emiten tokens
+    if (!process.env.JWT_SECRET) {
+      return res
+        .status(500)
+        .json({ error: "Configuración del servidor incompleta (JWT_SECRET)." });
+    }
+
     // Firmamos el token JWT tradicional
     const token = jwt.sign(
       {
@@ -156,7 +163,7 @@ exports.login = async (req, res) => {
         rol: usuario.rol,
         idLocalidad: usuario.idLocalidad,
       },
-      process.env.JWT_SECRET || "FORJA_SECRET_KEY_2026",
+      process.env.JWT_SECRET,
       { expiresIn: "8h" },
     );
 

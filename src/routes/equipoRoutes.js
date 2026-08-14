@@ -1,33 +1,32 @@
 const express = require("express");
 const router = express.Router();
 const equipoController = require("../controllers/equipoController");
-
-// 🚀 REVISÁ ESTA LÍNEA: Nos aseguramos de desestructurar la propiedad del archivo middleware
 const { subirDocumentacionAtleta } = require("../middlewares/uploadMiddleware");
+const { verificarRol } = require("../middlewares/auth");
 
-// (Opcional): Aquí añadirías tu middleware de validación de tokens
-// const { verificarToken } = require('../middlewares/authMiddleware');
-// router.use(verificarToken);
+// Todas las rutas de delegación requieren estar autenticado y tener rol EQUIPO o ADMIN.
+// Cierra el IDOR histórico que aceptaba ?usuarioId= sin auth.
+router.use(verificarRol(["EQUIPO", "ADMIN"]));
 
-// Rutas mapeadas para el flujo guiado por estados
+// Estado del panel (carga catálogo + equipo del usuario autenticado)
 router.get("/estado-panel", equipoController.obtenerEstadoPanel);
+
+// Alta inicial de delegación
 router.post("/registrar-equipo", equipoController.registrarEquipo);
 
-// Línea 14 corregida: Ahora los 3 argumentos son funciones reales reconocidas por Express
+// Inscripción de atletas
 router.post(
   "/registrar-jugador",
   subirDocumentacionAtleta,
   equipoController.registrarJugador,
 );
 
-// 👇 NUEVAS RUTAS DE EDICIÓN Y BAJA ASIGNADAS
-// 🚀 CORREGIDO: Añadimos 'subirDocumentacionAtleta' para que req.body deje de llegar undefined
+// Edición y baja
 router.put(
   "/editar-jugador/:id",
   subirDocumentacionAtleta,
   equipoController.editarJugador,
 );
-
 router.delete("/eliminar-jugador/:id", equipoController.eliminarJugador);
 
 module.exports = router;

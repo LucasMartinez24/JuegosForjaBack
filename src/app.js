@@ -36,41 +36,62 @@ app.use(
   }),
 );
 
-app.use(express.json());
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
 // 2. 🧠 MIDDLEWARE INTELIGENTE DE URLS ABSOLUTAS (LOCAL vs PRODUCCIÓN)
 // Intercepta los JSON de salida y les pega dinámicamente el host que hace la petición
 app.use((req, res, next) => {
+  // Detecta de forma elástica si corre en HTTP local o HTTPS en la nube VPS
+  const protocolo =
+    req.secure || req.headers["x-forwarded-proto"] === "https"
+      ? "https"
+      : "http";
+  const urlBaseDinamica = `${protocolo}://${req.get("host")}`;
+
+  // Recorre la respuesta y reemplaza SOLO las rutas relativas que empiezan
+  // con /uploads/. Si el valor ya tiene protocolo (absoluto), lo deja intacto.
+  const esObjetoPlano = (valor) => {
+    if (valor === null || typeof valor !== "object") return false;
+    const proto = Object.getPrototypeOf(valor);
+    return proto === Object.prototype || proto === null;
+  };
+
+  const prefijarRutas = (valor) => {
+    if (typeof valor === "string") {
+      if (valor.startsWith("/uploads/")) return `${urlBaseDinamica}${valor}`;
+      return valor;
+    }
+    if (Array.isArray(valor)) return valor.map(prefijarRutas);
+    if (esObjetoPlano(valor)) {
+      const resultado = {};
+      for (const clave of Object.keys(valor)) {
+        resultado[clave] = prefijarRutas(valor[clave]);
+      }
+      return resultado;
+    }
+    return valor;
+  };
+
   const originalJson = res.json;
   res.json = function (data) {
-    let jsonString = JSON.stringify(data);
-
-    if (jsonString && jsonString.includes("/uploads/")) {
-      // Detecta de forma elástica si corre en HTTP local o HTTPS en la nube VPS
-      const protocolo =
-        req.secure || req.headers["x-forwarded-proto"] === "https"
-          ? "https"
-          : "http";
-      const host = req.get("host"); // Captura dinámicamente "localhost:3000" o "api.juegosforja.online"
-      const urlBaseDinamica = `${protocolo}://${host}`;
-
-      // Reemplaza la ruta relativa por la URL absoluta calculada en tiempo real.
-      // La expresión regular evita duplicaciones si la URL ya cuenta con un protocolo inyectado previo.
-      jsonString = jsonString.replace(
-        /(?!https?:\/\/[^\s"'>]+)\/uploads\//g,
-        `${urlBaseDinamica}/uploads/`,
-      );
-    }
-
-    return originalJson.call(this, JSON.parse(jsonString));
+    return originalJson.call(this, prefijarRutas(data));
   };
   next();
 });
 
 // 📁 SERVIDOR ESTÁTICO DE ARCHIVOS DE AUDITORÍA Y COMPROBANTES DE DELEGADOS
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+// Headers seguros: forzamos descarga (no inline) y bloqueamos HTML
+// para que ningún archivo subido pueda ejecutarse en el navegador.
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "../uploads"), {
+    setHeaders: (res) => {
+      res.setHeader("Content-Disposition", "attachment");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+    },
+  }),
+);
 
 // =========================================================================
 // REGISTRO DE RUTAS INSTITUCIONALES 🛡️

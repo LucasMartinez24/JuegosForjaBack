@@ -1,5 +1,14 @@
 // src/controllers/municipioController.js
 const prisma = require("../config/db");
+const crypto = require("crypto");
+
+const CARACTERES_TOKEN = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+const generarTokenSeguro = () =>
+  `FORJA-${Array.from(
+    { length: 6 },
+    () => CARACTERES_TOKEN[crypto.randomInt(CARACTERES_TOKEN.length)],
+  ).join("")}`;
 
 /**
  * 1. Obtener el árbol de delegaciones locales del municipio
@@ -135,8 +144,13 @@ const generarTokenLocal = async (req, res) => {
         .json({ error: "Jurisdicción no válida en la sesión." });
     }
 
-    // Generamos un hash seguro corto (Ej: FORJA-A4B9)
-    const codigoToken = `FORJA-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    // Generamos un hash seguro corto (Ej: FORJA-6XKQ9Z) y aseguramos unicidad
+    let codigoToken;
+    do {
+      codigoToken = generarTokenSeguro();
+    } while (
+      await prisma.tokenInvitacion.findUnique({ where: { token: codigoToken } })
+    );
 
     const nuevoToken = await prisma.tokenInvitacion.create({
       data: {
@@ -174,7 +188,12 @@ const dictaminarAtletaLocal = async (req, res) => {
       },
     });
 
-    if (!atleta || atleta.equipo.usuario.idLocalidad !== idLocalidad) {
+    if (
+      !atleta ||
+      !atleta.equipo ||
+      !atleta.equipo.usuario ||
+      atleta.equipo.usuario.idLocalidad !== idLocalidad
+    ) {
       return res
         .status(403)
         .json({
