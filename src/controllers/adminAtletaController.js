@@ -202,15 +202,24 @@ const procesarAltaAtleta = async ({ equipoId, body, files }) => {
     };
   }
 
-  if (!files || !files.dniFrente || !files.dniDorso || !files.fichaMedica) {
-    limpiarArchivosMulter(files);
-    return {
-      ok: false,
-      status: 400,
-      error:
-        "Documentación incompleta. Debe adjuntar los 3 archivos obligatorios.",
-    };
-  }
+  // La documentación es OPCIONAL cuando el alta la realiza un ADMIN.
+  // Los representantes la siguen cargando a través de su propio flujo.
+  const urlDniFrente = files?.dniFrente?.length
+    ? `/uploads/documentos/${files.dniFrente[0].filename}`
+    : null;
+  const urlDniDorso = files?.dniDorso?.length
+    ? `/uploads/documentos/${files.dniDorso[0].filename}`
+    : null;
+  const urlFichaMedica = files?.fichaMedica?.length
+    ? `/uploads/documentos/${files.fichaMedica[0].filename}`
+    : null;
+  const urlCud = files?.cud?.length
+    ? `/uploads/documentos/${files.cud[0].filename}`
+    : null;
+
+  const archivosSubidos = [urlDniFrente, urlDniDorso, urlFichaMedica, urlCud].filter(
+    Boolean,
+  );
 
   const equipo = await prisma.equipo.findUnique({
     where: { id: equipoId },
@@ -218,33 +227,13 @@ const procesarAltaAtleta = async ({ equipoId, body, files }) => {
   });
 
   if (!equipo) {
+    archivosSubidos.forEach(borrarArchivoFisico);
     return {
       ok: false,
       status: 404,
       error: "La delegación indicada no existe.",
     };
   }
-
-  const esAdaptado = equipo.disciplina.tipo === "ADAPTADO";
-  if (esAdaptado && (!files.cud || files.cud.length === 0)) {
-    return {
-      ok: false,
-      status: 400,
-      error:
-        "Inscripción Denegada. El Certificado Único de Discapacidad (CUD) es obligatorio para disciplinas de Deporte Adaptado.",
-    };
-  }
-
-  const urlDniFrente = `/uploads/documentos/${files.dniFrente[0].filename}`;
-  const urlDniDorso = `/uploads/documentos/${files.dniDorso[0].filename}`;
-  const urlFichaMedica = `/uploads/documentos/${files.fichaMedica[0].filename}`;
-  const urlCud =
-    esAdaptado && files.cud
-      ? `/uploads/documentos/${files.cud[0].filename}`
-      : null;
-
-  const archivosSubidos = [urlDniFrente, urlDniDorso, urlFichaMedica];
-  if (urlCud) archivosSubidos.push(urlCud);
 
   const pruebaTargetId = idPrueba1 ? parseInt(idPrueba1) : null;
   if (!pruebaTargetId) {
