@@ -657,27 +657,46 @@ const actualizarAtleta = async (req, res) => {
       await tx.deportistaPruebaAdicional.deleteMany({
         where: { idDeportista: id },
       });
+
+      const dataUpdate = {
+        dni: dni.trim(),
+        nombre: nombre.trim(),
+        apellido: apellido.trim(),
+        fechaNacimiento: new Date(fechaNacimiento),
+        genero,
+        pesoKg: pesoFinal,
+        alturaCm: alturaFinal,
+        idPrueba: pruebaPrincipal.id,
+      };
+
+      if (req.files?.dniFrente?.length) {
+        if (atleta.urlDniFrente) borrarArchivoFisico(atleta.urlDniFrente);
+        dataUpdate.urlDniFrente = `/uploads/documentos/${req.files.dniFrente[0].filename}`;
+      }
+      if (req.files?.dniDorso?.length) {
+        if (atleta.urlDniDorso) borrarArchivoFisico(atleta.urlDniDorso);
+        dataUpdate.urlDniDorso = `/uploads/documentos/${req.files.dniDorso[0].filename}`;
+      }
+      if (req.files?.fichaMedica?.length) {
+        if (atleta.urlFichaMedica) borrarArchivoFisico(atleta.urlFichaMedica);
+        dataUpdate.urlFichaMedica = `/uploads/documentos/${req.files.fichaMedica[0].filename}`;
+      }
+      if (req.files?.cud?.length) {
+        if (atleta.urlCud) borrarArchivoFisico(atleta.urlCud);
+        dataUpdate.urlCud = `/uploads/documentos/${req.files.cud[0].filename}`;
+      }
+
+      if (idsAdicionales.length > 0) {
+        dataUpdate.pruebasAdicionales = {
+          create: idsAdicionales.map((idP) => ({
+            prueba: { connect: { id: idP } },
+          })),
+        };
+      }
+
       return tx.deportista.update({
         where: { id },
-        data: {
-          dni: dni.trim(),
-          nombre: nombre.trim(),
-          apellido: apellido.trim(),
-          fechaNacimiento: new Date(fechaNacimiento),
-          genero,
-          pesoKg: pesoFinal,
-          alturaCm: alturaFinal,
-          idPrueba: pruebaPrincipal.id,
-          ...(idsAdicionales.length > 0
-            ? {
-                pruebasAdicionales: {
-                  create: idsAdicionales.map((idP) => ({
-                    prueba: { connect: { id: idP } },
-                  })),
-                },
-              }
-            : {}),
-        },
+        data: dataUpdate,
         include: {
           prueba: true,
           pruebasAdicionales: { include: { prueba: true } },

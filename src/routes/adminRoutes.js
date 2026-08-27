@@ -73,6 +73,7 @@ router.get(
 router.put(
   "/actualizar-atleta/:id",
   verificarRol(["ADMIN"]),
+  subirDocumentacionAtleta,
   adminAtletaController.actualizarAtleta,
 );
 router.delete(
